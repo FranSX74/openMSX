@@ -12,6 +12,8 @@
 
 #include "AY8910Periphery.hh"
 #include "DeviceConfig.hh"
+#include "MSXMotherBoard.hh"
+#include "MidiRecorder.hh"
 
 #include "Math.hh"
 #include "cstd.hh"
@@ -469,6 +471,8 @@ AY8910::AY8910(const std::string& name_, AY8910Periphery& periphery_,
                float clockFreq)
 	: ResampledSoundDevice(config.getMotherBoard(), name_, "PSG", 3, std::lrint(clockFreq / 8), false)
 	, periphery(periphery_)
+	, midiRecorder(config.getMotherBoard().getMidiRecorder())
+	, midiRecorderId(midiRecorder.registerChip(MidiRecorder::Chip::PSG))
 	, debuggable(config.getMotherBoard(), getName())
 	, vibratoPercent(
 		config.getCommandController(), tmpStrCat(getName(), "_vibrato_percent"),
@@ -580,6 +584,7 @@ uint8_t AY8910::peekRegister(unsigned reg, EmuTime time) const
 void AY8910::writeRegister(unsigned reg, uint8_t value, EmuTime time)
 {
 	if (reg >= 16) return;
+	midiRecorder.psgWrite(midiRecorderId, reg, value, outputFreq * 8.0f, time);
 	if ((reg < AY_PORTA) && (reg == AY_ESHAPE || regs[reg] != value)) {
 		// Update the output buffer before changing the register.
 		updateStream(time);

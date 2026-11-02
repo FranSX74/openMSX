@@ -14,6 +14,7 @@
 namespace openmsx {
 
 class YM2413Core;
+class MidiRecorder;
 
 class YM2413 final : public ResampledSoundDevice
 {
@@ -37,6 +38,8 @@ private:
 
 private:
 	const std::unique_ptr<YM2413Core> core;
+	MidiRecorder& midiRecorder;
+	unsigned midiRecorderId;
 
 	struct Debuggable final : SimpleDebuggable {
 		Debuggable(MSXMotherBoard& motherBoard, const std::string& name);

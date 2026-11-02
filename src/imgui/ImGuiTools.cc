@@ -18,6 +18,8 @@
 
 #include "AviRecorder.hh"
 #include "Display.hh"
+#include "MSXMotherBoard.hh"
+#include "MidiRecorder.hh"
 
 #include "FileOperations.hh"
 
@@ -133,6 +135,9 @@ void ImGuiTools::showMenu(MSXMotherBoard* motherBoard)
 		im::Menu("Capture", [&]{
 			ImGui::MenuItem("Screenshot...", nullptr, &showScreenshot);
 			ImGui::MenuItem("Audio/Video...", nullptr, &showRecord);
+			auto midiShortCut = getShortCutForCommand(hotKey, "midi_record toggle");
+			ImGui::MenuItem("MIDI (PSG)...", midiShortCut.c_str(), &showMidiRecord, motherBoard != nullptr);
+			simpleToolTip("Record the PSG sound chip as a Standard MIDI File (one track per channel).");
 		});
 		ImGui::Separator();
 
@@ -176,6 +181,7 @@ void ImGuiTools::paint(MSXMotherBoard* /*motherBoard*/)
 {
 	if (showScreenshot) paintScreenshot();
 	if (showRecord) paintRecord();
+	if (showMidiRecord) paintMidiRecord();
 	paintNotes();
 
 	confirmDialog.execute();
@@ -395,6 +401,56 @@ void ImGuiTools::paintRecord()
 			bool recordVideo = recordSource != static_cast<int>(Source::AUDIO);
 			std::string_view directory = recordVideo ? AviRecorder::VIDEO_DIR : AviRecorder::AUDIO_DIR;
 			SDL_OpenURL(strCat("file://", FileOperations::getUserOpenMSXDir(directory)).c_str());
+		}
+	});
+}
+
+void ImGuiTools::paintMidiRecord()
+{
+	auto* motherBoard = manager.getReactor().getMotherBoard();
+	bool recording = motherBoard && motherBoard->getMidiRecorder().isRecording();
+
+	auto title = recording ? strCat("Recording MIDI to ", FileOperations::getFilename(
+	                                 motherBoard->getMidiRecorder().getFilename()))
+	                       : std::string("Capture MIDI (PSG)");
+	im::Window(tmpStrCat(title, "###MIDI").c_str(), &showMidiRecord, [&]{
+		if (!motherBoard) {
+			ImGui::TextUnformatted("No machine running."sv);
+			return;
+		}
+		im::Disabled(recording, [&]{
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Name"sv);
+			ImGui::SameLine();
+			const auto& style = ImGui::GetStyle();
+			auto buttonWidth = style.ItemSpacing.x + 2.0f * style.FramePadding.x +
+			                   ImGui::CalcTextSize("Start").x;
+			ImGui::SetNextItemWidth(-buttonWidth);
+			ImGui::InputText("##midiname", &midiRecordName);
+			ImGui::SameLine();
+			if (!recording && ImGui::Button("Start")) {
+				auto cmd = makeTclList("midi_record", "start");
+				if (!midiRecordName.empty()) {
+					cmd.addListElement(midiRecordName);
+				}
+				auto filename = FileOperations::parseCommandFileArgument(
+					midiRecordName, MidiRecorder::MIDI_DIR, "openmsx",
+					MidiRecorder::MIDI_EXTENSION);
+				if (FileOperations::exists(filename)) {
+					confirmDialog.open(
+						strCat("Overwrite MIDI file '", FileOperations::getFilename(filename), "'?"),
+						cmd);
+				} else {
+					manager.executeDelayed(cmd);
+				}
+			}
+		});
+		if (recording && ImGui::Button("Stop")) {
+			manager.executeDelayed(makeTclList("midi_record", "stop"));
+		}
+		ImGui::Separator();
+		if (ImGui::Button("Open MIDI folder")) {
+			SDL_OpenURL(strCat("file://", FileOperations::getUserOpenMSXDir(MidiRecorder::MIDI_DIR)).c_str());
 		}
 	});
 }

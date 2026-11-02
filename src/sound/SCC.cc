@@ -99,6 +99,8 @@
 #include "SCC.hh"
 
 #include "DeviceConfig.hh"
+#include "MSXMotherBoard.hh"
+#include "MidiRecorder.hh"
 
 #include "cstd.hh"
 #include "enumerate.hh"
@@ -128,6 +130,8 @@ SCC::SCC(const std::string& name_, const DeviceConfig& config,
 	, debuggable(config.getMotherBoard(), getName())
 	, deformTimer(time)
 	, currentMode(mode)
+	, midiRecorder(config.getMotherBoard().getMidiRecorder())
+	, midiRecorderId(midiRecorder.registerChip(MidiRecorder::Chip::SCC))
 {
 	// Make valgrind happy
 	std::ranges::fill(orgPeriod, 0);
@@ -173,8 +177,9 @@ void SCC::powerUp(EmuTime time)
 	}
 }
 
-void SCC::reset(EmuTime /*time*/)
+void SCC::reset(EmuTime time)
 {
+	midiRecorder.sccReset(midiRecorderId, time);
 	if (currentMode != Mode::Real) {
 		setMode(Mode::Compatible);
 	}
@@ -285,9 +290,27 @@ uint8_t SCC::getFreqVol(unsigned address) const
 	}
 }
 
+// Report a write to the MIDI recorder, in a layout that doesn't depend on the
+// SCC mode: 0x00..0x9F wave forms, 0xA0..0xAF frequency/volume/enable.
+void SCC::reportToMidiRecorder(uint8_t address, uint8_t value, EmuTime time)
+{
+	bool plus = currentMode == Mode::Plus;
+	unsigned freqVolBase = plus ? 0xA0 : 0x80;
+	if (address < freqVolBase) {
+		midiRecorder.sccWriteReg(midiRecorderId, address, value, time);
+		if (!plus && address >= 0x60) {
+			// in these modes channel 5 uses the wave form of channel 4
+			midiRecorder.sccWriteReg(midiRecorderId, address + 0x20, value, time);
+		}
+	} else if (address < freqVolBase + 0x20) {
+		midiRecorder.sccWriteReg(midiRecorderId, 0xA0 + (address & 0x0F), value, time);
+	}
+}
+
 void SCC::writeMem(uint8_t address, uint8_t value, EmuTime time)
 {
 	updateStream(time);
+	reportToMidiRecorder(address, value, time);
 
 	switch (currentMode) {
 	case Mode::Real:

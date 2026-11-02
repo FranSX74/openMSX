@@ -13,6 +13,7 @@ namespace openmsx {
 
 class AY8910Periphery;
 class DeviceConfig;
+class MidiRecorder;
 
 /** This class implements the AY-3-8910 sound chip.
   * Only the AY-3-8910 is emulated, no surrounding hardware,
@@ -180,6 +181,8 @@ private:
 
 private:
 	AY8910Periphery& periphery;
+	MidiRecorder& midiRecorder;
+	unsigned midiRecorderId;
 
 	struct Debuggable final : SimpleDebuggable {
 		Debuggable(MSXMotherBoard& motherBoard, const std::string& name);

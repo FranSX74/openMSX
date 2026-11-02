@@ -11,6 +11,8 @@
 
 namespace openmsx {
 
+class MidiRecorder;
+
 class SCC final : public ResampledSoundDevice
 {
 public:
@@ -44,6 +46,7 @@ private:
 	void setDeformReg(uint8_t value, EmuTime time);
 	void setDeformRegHelper(uint8_t value);
 	void setFreqVol(unsigned address, uint8_t value, EmuTime time);
+	void reportToMidiRecorder(uint8_t address, uint8_t value, EmuTime time);
 	[[nodiscard]] uint8_t getFreqVol(unsigned address) const;
 
 private:
@@ -57,6 +60,8 @@ private:
 
 	Clock<CLOCK_FREQ> deformTimer;
 	Mode currentMode;
+	MidiRecorder& midiRecorder;
+	unsigned midiRecorderId;
 
 	std::array<std::array<int8_t, 32>, 5> wave;
 	std::array<std::array<float, 32>, 5> volAdjustedWave; // ints stored as floats, see comment in adjust()

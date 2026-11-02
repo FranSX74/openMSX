@@ -405,6 +405,7 @@ sources = files(
     'sound/MSXTurboRPCM.cc',
     'sound/MSXYamahaSFG.cc',
     'sound/Mixer.cc',
+    'sound/MidiRecorder.cc',
     'sound/NullSoundDriver.cc',
     'sound/ResampleBlip.cc',
     'sound/ResampleHQ.cc',
