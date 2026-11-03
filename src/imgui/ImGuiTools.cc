@@ -445,6 +445,20 @@ void ImGuiTools::paintMidiRecord()
 				}
 			}
 		});
+		im::Disabled(recording, [&]{
+			auto& recorder = motherBoard->getMidiRecorder();
+			int detail = int(recorder.getDetail());
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("Detail"sv);
+			ImGui::SameLine();
+			bool changed = ImGui::RadioButton("Full", &detail, int(MidiRecorder::Detail::FULL));
+			HelpMarker("As close to the chips as possible: repeated notes, volume flutter, vibrato as pitch bend.");
+			ImGui::SameLine();
+			changed |= ImGui::RadioButton("Simple", &detail, int(MidiRecorder::Detail::SIMPLE));
+			HelpMarker("Fewer, longer notes that are easier to edit: no repeated notes, no pitch bend, "
+			           "no notes shorter than 60 ms, arpeggios as chords.");
+			if (changed) recorder.setDetail(MidiRecorder::Detail(detail));
+		});
 		if (recording && ImGui::Button("Stop")) {
 			manager.executeDelayed(makeTclList("midi_record", "stop"));
 		}

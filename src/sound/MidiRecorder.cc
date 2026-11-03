@@ -50,6 +50,8 @@ static constexpr int REATTACK_LEVELS = 4;
 static constexpr int FLUTTER_LEVELS = 2;
 // ... but not within this many grid steps (15 ms) of the start of the note.
 static constexpr int REATTACK_MIN_STEPS = 3;
+// Simple detail: notes shorter than this are dropped.
+static constexpr uint32_t SIMPLE_MIN_NOTE_TICKS = 60;
 // General MIDI "Square Lead".
 static constexpr uint8_t PROGRAM_SQUARE_LEAD = 80;
 // General MIDI "Synth Bass 1": used for buzzer bass (pitch given by the envelope).
@@ -266,6 +268,41 @@ void collapseArpeggios(Track& t)
 	}
 }
 
+/** Remove the notes that are shorter than 'minTicks'. */
+void dropShortNotes(Track& t, uint32_t minTicks)
+{
+	auto& ev = t.events;
+	std::vector<bool> removed(ev.size(), false);
+	std::array<size_t, 128> open;
+	constexpr size_t NONE = size_t(-1);
+	open.fill(NONE);
+	bool changed = false;
+	for (size_t i = 0; i < ev.size(); ++i) {
+		uint8_t status = ev[i].data[0] & 0xF0;
+		if (status != 0x80 && status != 0x90) continue;
+		uint8_t pitch = ev[i].data[1] & 0x7F;
+		if (status == 0x90 && ev[i].data[2] != 0) {
+			open[pitch] = i;
+		} else if (open[pitch] != NONE) {
+			if (ev[i].tick - ev[open[pitch]].tick < minTicks) {
+				removed[open[pitch]] = removed[i] = true;
+				changed = true;
+			}
+			open[pitch] = NONE;
+		}
+	}
+	if (!changed) return;
+	std::vector<Event> out;
+	out.reserve(ev.size());
+	t.used = 0;
+	for (size_t i = 0; i < ev.size(); ++i) {
+		if (removed[i]) continue;
+		out.push_back(ev[i]);
+		if ((ev[i].data[0] & 0xF0) == 0x90 && ev[i].data[2] != 0) ++t.used;
+	}
+	ev = std::move(out);
+}
+
 void putVlq(std::string& s, uint32_t v)
 {
 	char buf[5];
@@ -386,6 +423,7 @@ struct ToneVoice {
 	int lastLevel = -1; // level at the previous step while sounding
 	int age = 0;        // grid steps since the current note started
 	bool lastChangeWasDrop = false;
+	bool detailed = true; // false: no re-attacks, no pitch bend
 
 	/** @param active    is the voice sounding at this moment
 	  * @param fine      pitch as fractional MIDI note number
@@ -407,7 +445,7 @@ struct ToneVoice {
 			return;
 		}
 		++age;
-		if (lastLevel >= 0 && age >= REATTACK_MIN_STEPS) {
+		if (detailed && lastLevel >= 0 && age >= REATTACK_MIN_STEPS) {
 			// a big jump up, or a flutter: down by 2+ levels, then up by 2+ again
 			if (int(level) >= lastLevel + REATTACK_LEVELS ||
 			    (lastChangeWasDrop && int(level) >= lastLevel + FLUTTER_LEVELS)) {
@@ -457,6 +495,7 @@ struct ToneVoice {
 		double dev = std::clamp(fine - note, -BEND_RANGE, BEND_RANGE);
 		int wheel = int(std::lround(8192.0 + dev * (8192.0 / BEND_RANGE)));
 		wheel = std::clamp((wheel + 16) & ~31, 0, 16383);
+		if (!detailed) wheel = 8192;
 		if (newNote || wheel != lastWheel) {
 			t.add(tick, 0xE0, uint8_t(wheel & 0x7F), uint8_t(wheel >> 7));
 			lastWheel = wheel;
@@ -638,6 +677,15 @@ public:
 				else throw CommandException("Expected on or off, got: ", v);
 			}
 			result = recorder.getArpeggioChords() ? "on" : "off";
+		} else if (sub == "detail") {
+			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
+			if (tokens.size() == 3) {
+				auto v = tokens[2].getString();
+				if (v == "full") recorder.setDetail(MidiRecorder::Detail::FULL);
+				else if (v == "simple") recorder.setDetail(MidiRecorder::Detail::SIMPLE);
+				else throw CommandException("Expected full or simple, got: ", v);
+			}
+			result = (recorder.getDetail() == MidiRecorder::Detail::FULL) ? "full" : "simple";
 		} else if (sub == "status") {
 			result = recorder.isRecording()
 			       ? strCat("recording to ", recorder.getFilename())
@@ -654,6 +702,9 @@ public:
 		       "midi_record stop               stop recording and write the file(s)\n"
 		       "midi_record toggle             start (automatic name) or stop\n"
 		       "midi_record status             show whether a recording is active\n"
+		       "midi_record detail ?full|simple?  full (default): as close to the chips as possible;\n"
+		       "                              simple: fewer, longer notes (no repeated notes, no\n"
+		       "                              pitch bend, no notes under 60 ms, arpeggios as chords)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -661,7 +712,9 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 5>{"start", "stop", "toggle", "status", "arpeggio"});
+			completeString(tokens, std::array<std::string_view, 6>{"start", "stop", "toggle", "status", "arpeggio", "detail"});
+		} else if (tokens.size() == 3 && tokens[1] == "detail") {
+			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
 			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
 		} else if (tokens.size() == 3 && tokens[1] == "start") {
@@ -820,6 +873,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			std::array<uint8_t, 16> regs = {};
 			double envStart = 0.0;
 			std::array<ToneVoice, 3> tone;
+			for (auto& v : tone) v.detailed = detail == Detail::FULL;
 			std::array<DrumVoice, 3> noise;
 			std::array<bool, 3> noiseWasOn = {};
 			std::array<int, 3> pendDrum = {-1, -1, -1};
@@ -933,6 +987,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			dirty.fill(true);
 			std::array<WaveInfo, 5> wave = {};
 			std::array<ToneVoice, 5> tone;
+			for (auto& v : tone) v.detailed = detail == Detail::FULL;
 
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
@@ -983,6 +1038,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			std::array<unsigned, 5> drumEdges = {};
 			std::array<unsigned, 5> lastDrumEdges = {};
 			std::array<ToneVoice, 9> tone;
+			for (auto& v : tone) v.detailed = detail == Detail::FULL;
 			std::array<DrumVoice, 5> drums;
 
 			for (uint64_t n = 0; n <= steps; ++n) {
@@ -1054,9 +1110,14 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 		}
 	}
 
-	if (arpeggioChords) {
+	if (arpeggioChords || detail == Detail::SIMPLE) {
 		for (auto& t : tracks) {
 			if (t.melodic) collapseArpeggios(t);
+		}
+	}
+	if (detail == Detail::SIMPLE) {
+		for (auto& t : tracks) {
+			if (t.melodic) dropShortNotes(t, SIMPLE_MIN_NOTE_TICKS);
 		}
 	}
 

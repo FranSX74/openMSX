@@ -37,6 +37,9 @@ public:
 	static constexpr std::string_view MIDI_EXTENSION = ".mid";
 
 	enum class Chip : uint8_t { PSG, SCC, OPLL };
+	/** FULL: as close to the chips as possible (repeated notes, flutter,
+	  * vibrato as pitch bend). SIMPLE: fewer, longer notes, easier to edit. */
+	enum class Detail : uint8_t { FULL, SIMPLE };
 
 	struct Result {
 		size_t notes = 0;
@@ -100,6 +103,9 @@ public:
 	void setArpeggioChords(bool value) { arpeggioChords = value; }
 	[[nodiscard]] bool getArpeggioChords() const { return arpeggioChords; }
 
+	void setDetail(Detail value) { detail = value; }
+	[[nodiscard]] Detail getDetail() const { return detail; }
+
 	[[nodiscard]] bool isRecording() const { return recording; }
 	[[nodiscard]] const std::string& getFilename() const { return filename; }
 
@@ -135,6 +141,7 @@ private:
 	EmuTime startTime = EmuTime::zero();
 	bool recording = false;
 	bool arpeggioChords = true;
+	Detail detail = Detail::FULL;
 	std::unique_ptr<MidiRecordCmd> command;
 };
 

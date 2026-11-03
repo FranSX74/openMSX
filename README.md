@@ -39,6 +39,7 @@ midi_record start my_song.mid  ;# explicit name (relative names go in the midi f
 midi_record stop               ;# stop and write the file(s)
 midi_record toggle             ;# start (automatic name) or stop
 midi_record status
+midi_record detail full|simple ;# full (default): as the chips; simple: fewer, longer notes
 midi_record arpeggio on|off    ;# arpeggios as chords (default) or as fast notes
 ```
 
@@ -91,6 +92,11 @@ The chip state is sampled every 5 ms from the logged register writes.
   The same goes for a flutter: a game that alternates the volume every frame
   (down 2+ levels, up 2+ levels) is heard as very fast repeated notes, and
   that is what is written.
+- **Detail.** `full` (default) writes everything above. `simple` is meant for
+  tracks that are easier to read and edit: no repeated notes from volume
+  attacks or flutter (the volume stays a volume change), no pitch bend, no
+  notes shorter than 60 ms, and arpeggios are always chords. It is also a
+  selector in the *Capture MIDI* window.
 - **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches, at
   least 6 notes) are written as one sustained chord, because a chip voice that
   cycles through a chord every frame is heard as that chord. Slow patterns and
@@ -184,6 +190,7 @@ midi_record start mi_cancion.mid  ;# nombre propio (los relativos van a la carpe
 midi_record stop               ;# parar y escribir el/los archivo(s)
 midi_record toggle             ;# empezar (nombre automático) o parar
 midi_record status
+midi_record detail full|simple ;# full (por defecto): como los chips; simple: menos notas, más largas
 midi_record arpeggio on|off    ;# arpegios como acordes (por defecto) o como notas rápidas
 ```
 
@@ -237,6 +244,11 @@ registradas.
   Igual con el parpadeo: un juego que alterna el volumen en cada fotograma
   (baja 2 o más niveles, sube 2 o más) se oye como notas repetidas muy deprisa,
   y eso es lo que se escribe.
+- **Nivel de detalle.** `full` (por defecto) escribe todo lo anterior. `simple`
+  sirve para pistas más fáciles de leer y de editar: sin notas repetidas por
+  ataques o parpadeos de volumen (el volumen sigue siendo un cambio de volumen),
+  sin pitch bend, sin notas de menos de 60 ms y con los arpegios siempre como
+  acordes. También es un selector en la ventana *Capture MIDI*.
 - **Los arpegios** (tandas de notas de como mucho 60 ms que ciclan entre 2 y 4
   alturas, al menos 6 notas) se escriben como un único acorde sostenido, porque
   una voz del chip que recorre un acorde en cada fotograma se oye como ese
