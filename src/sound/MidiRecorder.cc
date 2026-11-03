@@ -45,6 +45,9 @@ static constexpr unsigned MIN_PERIOD = 10;
 // voice is a new attack of the same pitch: written as a new note, not as a
 // volume change (repeated notes, rapid retriggers).
 static constexpr int REATTACK_LEVELS = 4;
+// A flutter (the game alternates the volume every frame) is a series of
+// attacks too: a drop of this many levels followed by a rise of as many.
+static constexpr int FLUTTER_LEVELS = 2;
 // ... but not within this many grid steps (15 ms) of the start of the note.
 static constexpr int REATTACK_MIN_STEPS = 3;
 // General MIDI "Square Lead".
@@ -382,6 +385,7 @@ struct ToneVoice {
 	int program = -1;
 	int lastLevel = -1; // level at the previous step while sounding
 	int age = 0;        // grid steps since the current note started
+	bool lastChangeWasDrop = false;
 
 	/** @param active    is the voice sounding at this moment
 	  * @param fine      pitch as fractional MIDI note number
@@ -399,12 +403,19 @@ struct ToneVoice {
 			pendNote = -1;
 			pendCount = 0;
 			lastLevel = -1;
+			lastChangeWasDrop = false;
 			return;
 		}
 		++age;
-		if (lastLevel >= 0 && int(level) >= lastLevel + REATTACK_LEVELS &&
-		    age >= REATTACK_MIN_STEPS) {
-			forceNew = true;
+		if (lastLevel >= 0 && age >= REATTACK_MIN_STEPS) {
+			// a big jump up, or a flutter: down by 2+ levels, then up by 2+ again
+			if (int(level) >= lastLevel + REATTACK_LEVELS ||
+			    (lastChangeWasDrop && int(level) >= lastLevel + FLUTTER_LEVELS)) {
+				forceNew = true;
+			}
+		}
+		if (lastLevel >= 0 && int(level) != lastLevel) {
+			lastChangeWasDrop = int(level) <= lastLevel - FLUTTER_LEVELS;
 		}
 		lastLevel = int(level);
 		int nearest = std::clamp(int(std::lround(fine)), 0, 127);

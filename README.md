@@ -88,6 +88,9 @@ The chip state is sampled every 5 ms from the logged register writes.
 - **Repeated notes:** when the volume of a sounding voice jumps up by 4 or more
   levels (out of 15) the game is attacking the same note again, so a new note
   is written instead of a volume change.
+  The same goes for a flutter: a game that alternates the volume every frame
+  (down 2+ levels, up 2+ levels) is heard as very fast repeated notes, and
+  that is what is written.
 - **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches, at
   least 6 notes) are written as one sustained chord, because a chip voice that
   cycles through a chord every frame is heard as that chord. Slow patterns and
@@ -231,6 +234,9 @@ registradas.
 - **Notas repetidas:** cuando el volumen de una voz que está sonando sube de
   golpe 4 o más niveles (de 15), el juego está atacando de nuevo la misma nota,
   y se escribe una nota nueva en lugar de un cambio de volumen.
+  Igual con el parpadeo: un juego que alterna el volumen en cada fotograma
+  (baja 2 o más niveles, sube 2 o más) se oye como notas repetidas muy deprisa,
+  y eso es lo que se escribe.
 - **Los arpegios** (tandas de notas de como mucho 60 ms que ciclan entre 2 y 4
   alturas, al menos 6 notas) se escriben como un único acorde sostenido, porque
   una voz del chip que recorre un acorde en cada fotograma se oye como ese
