@@ -160,8 +160,9 @@ void writeTrack(std::string& out, const Track& t, uint32_t endTick)
 
 	uint32_t last = 0;
 	for (const auto& e : t.events) {
-		putVlq(body, e.tick - last);
-		last = e.tick;
+		uint32_t tick = std::max(e.tick, last); // never go back in time
+		putVlq(body, tick - last);
+		last = tick;
 		uint8_t status = e.data[0];
 		if (t.channel >= 0 && status >= 0x80 && status < 0xF0) {
 			status = uint8_t((status & 0xF0) | t.channel);
@@ -662,7 +663,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
-				uint32_t tick = toTick(g);
+				uint32_t tick = std::min(toTick(g), endTick);
 
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
@@ -771,7 +772,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
-				uint32_t tick = toTick(g);
+				uint32_t tick = std::min(toTick(g), endTick);
 
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
@@ -822,7 +823,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
-				uint32_t tick = toTick(g);
+				uint32_t tick = std::min(toTick(g), endTick);
 
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
