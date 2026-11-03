@@ -10,6 +10,7 @@
 #include "strCat.hh"
 
 #include <algorithm>
+#include <numeric>
 #include <cassert>
 #include <cmath>
 #include <fstream>
@@ -112,6 +113,21 @@ static constexpr std::array<uint8_t, 16> OPLL_PROGRAMS = {
 	32, // 14 Wood Bass  -> Acoustic Bass
 	27, // 15 Elec Guitar-> Electric Guitar (clean)
 };
+// Frequency multipliers (MULT) of the operators, in half units (index = MULT
+// register value, 0 means x1/2).
+static constexpr std::array<unsigned, 16> OPLL_MULT_HALVES = {
+	1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 20, 24, 24, 30, 30};
+// MULT of {modulator, carrier} of the 15 built-in instruments (index 1..15,
+// from the instrument ROM).
+static constexpr std::array<std::array<uint8_t, 2>, 16> OPLL_ROM_MULT = {{
+	{0, 0},                                   // user: read from registers
+	{1, 1}, {3, 1}, {3, 1}, {1, 1}, {2, 1},   // violin guitar piano flute clarinet
+	{1, 2}, {1, 1}, {3, 1}, {1, 1}, {1, 1},   // oboe trumpet organ horn synthesizer
+	{3, 1}, {7, 1}, {1, 0}, {1, 1}, {1, 1}}}; // harpsichord vibraphone synth-bass wood-bass e-guitar
+// A user patch whose modulator is quieter than this (total level, 0.75 dB
+// steps) does not modulate audibly: the carrier alone sets the pitch.
+static constexpr unsigned OPLL_WEAK_MODULATOR_TL = 40;
+
 // GM percussion notes for the 5 OPLL rhythm instruments, in the order of
 // the bits of register 0x0E (bit 0 first): hi-hat, top cymbal, tom-tom,
 // snare drum, bass drum.
@@ -728,6 +744,29 @@ uint8_t drumForNoise(unsigned noisePeriod)
 	return 36;
 }
 
+
+/** Pitch offset in semitones between the F-number frequency and the pitch that
+  * is heard for an OPLL channel. The spectrum of two operators consists of
+  * the multiples of the greatest common divisor of their MULT values, so e.g.
+  * the synthesizer bass (carrier MULT 1/2) sounds an octave lower. */
+double opllPitchOffset(unsigned inst, const std::array<uint8_t, 64>& regs)
+{
+	unsigned mod, car;
+	bool weakModulator = false;
+	if (inst == 0) {
+		mod = regs[0x00] & 15;
+		car = regs[0x01] & 15;
+		weakModulator = (regs[0x02] & 0x3F) >= OPLL_WEAK_MODULATOR_TL;
+	} else {
+		mod = OPLL_ROM_MULT[inst][0];
+		car = OPLL_ROM_MULT[inst][1];
+	}
+	unsigned c = OPLL_MULT_HALVES[car];
+	unsigned m = OPLL_MULT_HALVES[mod];
+	unsigned g = weakModulator ? c : std::gcd(c, m);
+	return 12.0 * std::log2(double(g) / 2.0);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -1219,6 +1258,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 						double freq = double(fnum) * double(1u << block)
 						            * (OPLL_CLOCK / 72.0) / 524288.0;
 						fine = fineNoteForFrequency(freq);
+						fine += opllPitchOffset(inst, regs);
 					}
 					bool force = keyEdges[c] != lastKeyEdges[c];
 					lastKeyEdges[c] = keyEdges[c];

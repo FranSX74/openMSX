@@ -121,6 +121,11 @@ The chip state is sampled every 5 ms from the logged register writes.
 - **MSX-Music**: the 15 built-in instruments are mapped to General MIDI
   programs, key-on edges are tracked so a quick off/on of the same note is a new
   note, and the rhythm mode drums go to the percussion channel.
+  The pitch that is heard is not always the F-number frequency: the spectrum of
+  the two operators consists of multiples of the greatest common divisor of
+  their MULT values, so the synthesizer bass sounds an octave lower. This is
+  applied to the built-in instruments and to the user patch (a user patch with a
+  very quiet modulator takes the pitch of the carrier alone).
 - **SCC**: the 32-sample wave form is analysed (square, saw, sine/triangle,
   other) to pick a GM program. The volume is scaled by the wave amplitude.
   The three SCC modes (real, compatible, SCC+) are handled.
@@ -293,6 +298,11 @@ registradas.
   MIDI, se vigilan los flancos de key-on para que un apagado/encendido rápido
   de la misma nota cuente como nota nueva, y la batería del modo ritmo va al
   canal de percusión.
+  El tono que se oye no siempre es la frecuencia del F-number: el espectro de los
+  dos operadores son múltiplos del máximo común divisor de sus valores MULT, así
+  que el bajo sintético suena una octava más grave. Se aplica a los
+  instrumentos internos y al parche de usuario (con un modulador muy bajo, el
+  tono es el del portador).
 - **SCC**: se analiza la forma de onda de 32 muestras (cuadrada, sierra,
   seno/triángulo, otra) para elegir el programa GM. El volumen se escala por la
   amplitud de la onda. Funcionan los tres modos del SCC (real, compatible, SCC+).
