@@ -204,8 +204,8 @@ uint8_t SCC::readMem(uint8_t addr, EmuTime time)
 	//   SCC_Real:       0xE0..0xFF
 	//   SCC_Compatible: 0xC0..0xDF
 	//   SCC_plusmode:   0xC0..0xDF
-	if (((currentMode == Mode::Real) && (addr >= 0xE0)) ||
-	    ((currentMode != Mode::Real) && (0xC0 <= addr) && (addr < 0xE0))) {
+	if (isDeformAddress(addr)) {
+		midiRecorder.sccWriteReg(midiRecorderId, 0xB0, 0xFF, time); // a read acts as a write of 0xFF
 		setDeformReg(0xFF, time);
 	}
 	return peekMem(addr, time);
@@ -291,7 +291,8 @@ uint8_t SCC::getFreqVol(unsigned address) const
 }
 
 // Report a write to the MIDI recorder, in a layout that doesn't depend on the
-// SCC mode: 0x00..0x9F wave forms, 0xA0..0xAF frequency/volume/enable.
+// SCC mode: 0x00..0x9F wave forms, 0xA0..0xAF frequency/volume/enable and
+// 0xB0 the deformation register.
 void SCC::reportToMidiRecorder(uint8_t address, uint8_t value, EmuTime time)
 {
 	bool plus = currentMode == Mode::Plus;
@@ -304,7 +305,19 @@ void SCC::reportToMidiRecorder(uint8_t address, uint8_t value, EmuTime time)
 		}
 	} else if (address < freqVolBase + 0x20) {
 		midiRecorder.sccWriteReg(midiRecorderId, 0xA0 + (address & 0x0F), value, time);
+	} else if (isDeformAddress(address)) {
+		midiRecorder.sccWriteReg(midiRecorderId, 0xB0, value, time);
 	}
+}
+
+bool SCC::isDeformAddress(uint8_t address) const
+{
+	// Deform-register locations:
+	//   SCC_Real:       0xE0..0xFF
+	//   SCC_Compatible: 0xC0..0xDF
+	//   SCC_plusmode:   0xC0..0xDF
+	return (currentMode == Mode::Real) ? (address >= 0xE0)
+	                                   : (0xC0 <= address && address < 0xE0);
 }
 
 void SCC::writeMem(uint8_t address, uint8_t value, EmuTime time)

@@ -916,7 +916,7 @@ void MidiRecorder::start(const std::string& file, EmuTime time)
 	// Initial register state
 	for (size_t i = 0; i < chips.size(); ++i) {
 		const auto& s = chips[i];
-		unsigned num = (s.kind == Chip::PSG) ? 14 : (s.kind == Chip::SCC) ? 0xB0 : 0x39;
+		unsigned num = (s.kind == Chip::PSG) ? 14 : (s.kind == Chip::SCC) ? 0xB1 : 0x39;
 		for (unsigned r = 0; r < num; ++r) {
 			entries.push_back({0.0, s.clock, uint8_t(i), uint8_t(r), s.regs[r]});
 		}
@@ -1108,6 +1108,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			std::array<uint8_t, 256> regs = {};
 			std::array<bool, 5> dirty;
 			dirty.fill(true);
+			std::array<unsigned, 5> effPeriod = {}; // period after the deformation register
 			std::array<WaveInfo, 5> wave = {};
 			std::array<ToneVoice, 5> tone;
 			for (auto& v : tone) v.detailed = detail == Detail::FULL;
@@ -1120,13 +1121,22 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 					const auto& e = *list[idx++];
 					regs[e.reg] = e.value;
 					if (e.reg < 0xA0) dirty[e.reg >> 5] = true;
+					if (e.reg >= 0xA0 && e.reg < 0xAA) {
+						// as in the SCC: the deformation register that is active at the time of
+						// the frequency write decides how many bits of the period are used
+						unsigned c = (e.reg - 0xA0) / 2;
+						unsigned per = regs[0xA0 + 2 * c] | ((regs[0xA1 + 2 * c] & 0x0F) << 8);
+						if (regs[0xB0] & 2) per &= 0xFF;
+						else if (regs[0xB0] & 1) per >>= 8;
+						effPeriod[c] = per;
+					}
 				}
 				for (unsigned c = 0; c < 5; ++c) {
 					if (dirty[c]) {
 						wave[c] = classifyWave(&regs[c * 32]);
 						dirty[c] = false;
 					}
-					unsigned period = regs[0xA0 + 2 * c] | ((regs[0xA1 + 2 * c] & 0x0F) << 8);
+					unsigned period = effPeriod[c];
 					unsigned vol = regs[0xAA + c] & 0x0F;
 					bool enabled = regs[0xAF] & (1u << c);
 					// quiet wave forms sound softer

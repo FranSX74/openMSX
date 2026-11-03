@@ -46,6 +46,7 @@ private:
 	void setDeformReg(uint8_t value, EmuTime time);
 	void setDeformRegHelper(uint8_t value);
 	void setFreqVol(unsigned address, uint8_t value, EmuTime time);
+	[[nodiscard]] bool isDeformAddress(uint8_t address) const;
 	void reportToMidiRecorder(uint8_t address, uint8_t value, EmuTime time);
 	[[nodiscard]] uint8_t getFreqVol(unsigned address) const;
 

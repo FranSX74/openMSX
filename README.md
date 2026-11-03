@@ -101,6 +101,10 @@ The chip state is sampled every 5 ms from the logged register writes.
   Arpeggios are converted to chords first. The guess can be wrong, which is why
   it is optional. In `simple` detail, with this off, those short notes are
   dropped like any note under 60 ms.
+- **SCC deformation register:** the 4-bit and 8-bit frequency modes change the
+  pitch the chip really plays, and are followed (including a read of the
+  register, which acts as a write of 0xFF). The wave rotation modes cannot be
+  represented in MIDI and are ignored.
 - **Glitches:** notes shorter than 10 ms are dropped. The chips are updated
   at most every 20 ms, so those come from reading a period between the writes
   of its two bytes.
@@ -267,6 +271,10 @@ registradas.
   convierten los arpegios en acordes. La detección puede equivocarse, por eso es
   opcional. En el detalle `simple`, con esto desactivado, esas notas cortas se
   descartan como cualquier nota de menos de 60 ms.
+- **Registro de deformación del SCC:** los modos de frecuencia de 4 y 8 bits
+  cambian el tono que toca el chip de verdad y se siguen (también una lectura
+  del registro, que equivale a escribir 0xFF). Los modos de rotación de la onda
+  no se pueden representar en MIDI y se ignoran.
 - **Glitches:** se descartan las notas de menos de 10 ms. Los chips se actualizan
   como mucho cada 20 ms, así que salen de leer un periodo entre las escrituras
   de sus dos bytes.
