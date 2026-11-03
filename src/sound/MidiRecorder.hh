@@ -37,6 +37,16 @@ public:
 	static constexpr std::string_view MIDI_EXTENSION = ".mid";
 
 	enum class Chip : uint8_t { PSG, SCC, OPLL };
+
+	/** Receives the chip register writes as they happen, e.g. for a device
+	  * that produces MIDI in real time. */
+	class Listener {
+	public:
+		virtual void psgWrite(unsigned id, unsigned reg, uint8_t value,
+		                      float clock, EmuTime time) = 0;
+	protected:
+		~Listener() = default;
+	};
 	/** FULL: as close to the chips as possible (repeated notes, flutter,
 	  * vibrato as pitch bend). SIMPLE: fewer, longer notes, easier to edit. */
 	enum class Detail : uint8_t { FULL, SIMPLE };
@@ -69,6 +79,7 @@ public:
 		s.regs[reg & 15] = value;
 		s.clock = clock;
 		if (recording) log(id, reg & 15, value, clock, time);
+		for (auto* l : listeners) l->psgWrite(id, reg & 15, value, clock, time);
 	}
 
 	/** Write to the YM2413 address (port=false) or data (port=true) port. */
@@ -98,6 +109,9 @@ public:
 		if (recording) log(id, reg & 0xFF, value, s.clock, time);
 	}
 	void sccReset(unsigned id, EmuTime time);
+
+	void addListener(Listener* l) { listeners.push_back(l); }
+	void removeListener(Listener* l) { std::erase(listeners, l); }
 
 	/** Write arpeggios (fast cycles through a few pitches) as chords. */
 	void setArpeggioChords(bool value) { arpeggioChords = value; }
@@ -141,6 +155,7 @@ private:
 private:
 	MSXMotherBoard& motherBoard;
 	std::vector<ChipState> chips;
+	std::vector<Listener*> listeners;
 	std::vector<LogEntry> entries;
 	std::string filename;
 	EmuTime startTime = EmuTime::zero();

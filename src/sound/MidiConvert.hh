@@ -227,6 +227,33 @@ struct DrumVoice {
 	void tick(Track& t, uint32_t tick);
 };
 
+/** Converts the register state of one PSG, sampled on the grid, into notes on
+  * three tone tracks and one noise (drum) track. Used for the export (the
+  * whole recording is replayed) and for the real-time output (one step per
+  * grid period). */
+class PsgConverter
+{
+public:
+	explicit PsgConverter(bool detailed);
+
+	/** Register write at the given time (seconds). */
+	void write(unsigned reg, uint8_t value, double time);
+	/** Evaluate the state at time 'g' (seconds), appending events at 'tick'. */
+	void step(double g, uint32_t tick, float clock,
+	          const std::array<Track*, 3>& tones, Track& drums);
+	/** Release all sounding notes. */
+	void finish(uint32_t tick, const std::array<Track*, 3>& tones, Track& drums);
+
+private:
+	std::array<uint8_t, 16> regs = {};
+	double envStart = 0.0;
+	std::array<ToneVoice, 3> tone;
+	std::array<DrumVoice, 3> noise;
+	std::array<bool, 3> noiseWasOn = {};
+	std::array<int, 3> pendDrum = {-1, -1, -1};
+	std::array<int, 3> pendCount = {};
+};
+
 // ---------------------------------------------------------------------------
 // Post-processing of a track
 // ---------------------------------------------------------------------------

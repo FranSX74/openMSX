@@ -37,6 +37,7 @@
 #include "MSXMegaRam.hh"
 #include "MSXMemoryMapper.hh"
 #include "MSXMidi.hh"
+#include "MSXMidiTap.hh"
 #include "MSXMirrorDevice.hh"
 #include "MSXModem.hh"
 #include "MSXMoonSound.hh"
@@ -160,6 +161,8 @@ std::unique_ptr<MSXDevice> DeviceFactory::create(DeviceConfig& conf)
 		result = std::make_unique<MSXRam>(conf);
 	} else if (type == "VDP") {
 		result = std::make_unique<VDP>(conf);
+	} else if (type == "MidiTap") {
+		result = std::make_unique<MSXMidiTap>(conf);
 	} else if (type == "E6Timer") {
 		result = std::make_unique<MSXE6Timer>(conf);
 	} else if (type == "HiResTimer") {

@@ -287,15 +287,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			tracks.emplace_back(strCat("PSG", suffix, " noise"), Group::PSG_SCC, false);
 			Track* drumTrack = &tracks.back();
 
-			std::array<uint8_t, 16> regs = {};
-			double envStart = 0.0;
-			std::array<ToneVoice, 3> tone;
-			for (auto& v : tone) v.detailed = detail == Detail::FULL;
-			std::array<DrumVoice, 3> noise;
-			std::array<bool, 3> noiseWasOn = {};
-			std::array<int, 3> pendDrum = {-1, -1, -1};
-			std::array<int, 3> pendCount = {};
-
+			PsgConverter psg(detail == Detail::FULL);
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
 				uint32_t tick = std::min(toTick(g), endTick);
@@ -303,93 +295,11 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
 					clock = e.clock;
-					if (e.reg < 16) {
-						regs[e.reg] = e.value;
-						if (e.reg == 13) envStart = e.time;
-					}
+					psg.write(e.reg, e.value, e.time);
 				}
-
-				unsigned mixer = regs[7];
-				unsigned noisePeriod = regs[6] & 0x1F;
-				unsigned envShape = regs[13] & 0x0F;
-				unsigned envPeriod = std::max(1u, unsigned(regs[11] | (regs[12] << 8)));
-				double envStepSeconds = 16.0 * envPeriod / double(clock);
-				bool envRepeats = envShape >= 8 && !(envShape & 1);
-				double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
-				bool buzz = envRepeats &&
-				            (16.0 * envStepSeconds < BUZZ_CYCLE_SECONDS);
-
-				for (unsigned v = 0; v < 3; ++v) {
-					bool toneOn  = !(mixer & (1u << v));
-					bool noiseOn = !(mixer & (8u << v));
-					unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
-
-					// Buzzer bass: repeating envelope, no noise, and either no tone
-					// or a tone that is a harmonic of the envelope.
-					bool usesEnv = regs[8 + v] & 0x10;
-					bool envBass = false;
-					double envFreq = 0.0;
-					if (usesEnv && envRepeats && !noiseOn &&
-					    envSteps * envStepSeconds < BUZZ_BASS_CYCLE_SECONDS) {
-						envFreq = 1.0 / (envSteps * envStepSeconds);
-						if (!toneOn) {
-							envBass = true;
-						} else if (period >= MIN_PERIOD) {
-							double r = (double(clock) / (16.0 * period)) / envFreq;
-							envBass = r >= 1.5 &&
-							          std::abs(r - std::round(r)) <= 0.1 + 0.02 * r;
-						}
-					}
-
-					unsigned level = regs[8 + v] & 0x0F;
-					if (usesEnv) {
-						if (buzz || envBass) {
-							level = 11;
-						} else {
-							auto stepNo = uint64_t(std::max(0.0, g - envStart) / envStepSeconds);
-							level = envelopeLevel(envShape, stepNo);
-						}
-					}
-					bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
-					double fine = 0.0;
-					if (envBass) {
-						fine = fineNoteForFrequency(envFreq);
-					} else if (active) {
-						fine = fineNoteForFrequency(double(clock) / (16.0 * period));
-					}
-					tone[v].update(*tt[v], tick, active, fine, level, false,
-					               envBass ? PROGRAM_SYNTH_BASS : PROGRAM_SQUARE_LEAD);
-
-					// ---- noise (drums) ----
-					auto& nv = noise[v];
-					bool nActive = noiseOn && level > 0;
-					nv.tick(*drumTrack, tick);
-					if (!nActive) {
-						nv.release(*drumTrack, tick);
-					} else {
-						int drum = drumForNoise(noisePeriod);
-						if (!noiseWasOn[v]) {
-							nv.hit(*drumTrack, tick, drum, level);
-							pendDrum[v] = -1;
-						} else if (nv.drum >= 0 && drum != nv.drum) {
-							// Different band: hit again, but only
-							// once it is stable for a few steps.
-							if (pendDrum[v] != drum) {
-								pendDrum[v] = drum;
-								pendCount[v] = 1;
-							} else if (++pendCount[v] >= 3) {
-								nv.hit(*drumTrack, tick, drum, level);
-								pendDrum[v] = -1;
-							}
-						}
-					}
-					noiseWasOn[v] = nActive;
-				}
+				psg.step(g, tick, clock, tt, *drumTrack);
 			}
-			for (unsigned v = 0; v < 3; ++v) {
-				tone[v].finish(*tt[v], endTick);
-				noise[v].release(*drumTrack, endTick);
-			}
+			psg.finish(endTick, tt, *drumTrack);
 			if (detectPercussion) {
 				for (unsigned v = 0; v < 3; ++v) {
 					// Arpeggios first: their falling parts are not drums.

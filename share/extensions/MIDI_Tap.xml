@@ -1,0 +1,13 @@
+<?xml version="1.0" ?>
+<!DOCTYPE msxconfig SYSTEM 'msxconfig2.dtd'>
+<msxconfig>
+  <info>
+    <name>MIDI Tap</name>
+    <manufacturer>openMSX</manufacturer>
+    <description>Sends the music of the PSG to a MIDI out connector in real time.</description>
+    <type>MIDI cartridge</type>
+  </info>
+  <devices>
+    <MidiTap id="MIDI Tap"/>
+  </devices>
+</msxconfig>

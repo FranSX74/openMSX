@@ -143,6 +143,108 @@ void DrumVoice::tick(Track& t, uint32_t tick)
 	if (drum >= 0 && ++age >= DRUM_MAX_STEPS) release(t, tick);
 }
 
+PsgConverter::PsgConverter(bool detailed)
+{
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void PsgConverter::write(unsigned reg, uint8_t value, double time)
+{
+	if (reg < 16) {
+		regs[reg] = value;
+		if (reg == 13) envStart = time;
+	}
+}
+
+void PsgConverter::step(double g, uint32_t tick, float clock,
+                        const std::array<Track*, 3>& tones, Track& drums)
+{
+	unsigned mixer = regs[7];
+	unsigned noisePeriod = regs[6] & 0x1F;
+	unsigned envShape = regs[13] & 0x0F;
+	unsigned envPeriod = std::max(1u, unsigned(regs[11] | (regs[12] << 8)));
+	double envStepSeconds = 16.0 * envPeriod / double(clock);
+	bool envRepeats = envShape >= 8 && !(envShape & 1);
+	double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
+	bool buzz = envRepeats &&
+	            (16.0 * envStepSeconds < BUZZ_CYCLE_SECONDS);
+
+	for (unsigned v = 0; v < 3; ++v) {
+		bool toneOn  = !(mixer & (1u << v));
+		bool noiseOn = !(mixer & (8u << v));
+		unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
+
+		// Buzzer bass: repeating envelope, no noise, and either no tone
+		// or a tone that is a harmonic of the envelope.
+		bool usesEnv = regs[8 + v] & 0x10;
+		bool envBass = false;
+		double envFreq = 0.0;
+		if (usesEnv && envRepeats && !noiseOn &&
+		    envSteps * envStepSeconds < BUZZ_BASS_CYCLE_SECONDS) {
+			envFreq = 1.0 / (envSteps * envStepSeconds);
+			if (!toneOn) {
+				envBass = true;
+			} else if (period >= MIN_PERIOD) {
+				double r = (double(clock) / (16.0 * period)) / envFreq;
+				envBass = r >= 1.5 &&
+				          std::abs(r - std::round(r)) <= 0.1 + 0.02 * r;
+			}
+		}
+
+		unsigned level = regs[8 + v] & 0x0F;
+		if (usesEnv) {
+			if (buzz || envBass) {
+				level = 11;
+			} else {
+				auto stepNo = uint64_t(std::max(0.0, g - envStart) / envStepSeconds);
+				level = envelopeLevel(envShape, stepNo);
+			}
+		}
+		bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
+		double fine = 0.0;
+		if (envBass) {
+			fine = fineNoteForFrequency(envFreq);
+		} else if (active) {
+			fine = fineNoteForFrequency(double(clock) / (16.0 * period));
+		}
+		tone[v].update(*tones[v], tick, active, fine, level, false,
+		               envBass ? PROGRAM_SYNTH_BASS : PROGRAM_SQUARE_LEAD);
+
+		// ---- noise (drums) ----
+		auto& nv = noise[v];
+		bool nActive = noiseOn && level > 0;
+		nv.tick(drums, tick);
+		if (!nActive) {
+			nv.release(drums, tick);
+		} else {
+			int drum = drumForNoise(noisePeriod);
+			if (!noiseWasOn[v]) {
+				nv.hit(drums, tick, drum, level);
+				pendDrum[v] = -1;
+			} else if (nv.drum >= 0 && drum != nv.drum) {
+				// Different band: hit again, but only
+				// once it is stable for a few steps.
+				if (pendDrum[v] != drum) {
+					pendDrum[v] = drum;
+					pendCount[v] = 1;
+				} else if (++pendCount[v] >= 3) {
+					nv.hit(drums, tick, drum, level);
+					pendDrum[v] = -1;
+				}
+			}
+		}
+		noiseWasOn[v] = nActive;
+	}
+}
+
+void PsgConverter::finish(uint32_t tick, const std::array<Track*, 3>& tones, Track& drums)
+{
+	for (unsigned v = 0; v < 3; ++v) {
+		tone[v].finish(*tones[v], tick);
+		noise[v].release(drums, tick);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Post-processing of a track
 // ---------------------------------------------------------------------------

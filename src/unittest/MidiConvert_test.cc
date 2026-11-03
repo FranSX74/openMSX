@@ -441,3 +441,31 @@ TEST_CASE("MidiConvert: sweepsToDrums")
 		CHECK(sweepsToDrums(voice, drums) == 0);
 	}
 }
+
+TEST_CASE("MidiConvert: PsgConverter")
+{
+	const float clock = 1789772.0f;
+	std::array<Track, 3> t = {makeTrack(), makeTrack(), makeTrack()};
+	auto drums = makeTrack(false);
+	std::array<Track*, 3> tp = {&t[0], &t[1], &t[2]};
+	PsgConverter psg(true);
+
+	// channel A: period 254 (~440 Hz), volume 12, tone on, noise off
+	psg.write(0, 254, 0.0);
+	psg.write(1, 0, 0.0);
+	psg.write(8, 12, 0.0);
+	psg.write(7, 0x3E, 0.0);
+	for (unsigned n = 0; n < 20; ++n) {
+		psg.step(n * GRID_SECONDS, uint32_t(n * 5), clock, tp, drums);
+	}
+	auto on = notesOn(t[0]);
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].data[1] == 69);
+	CHECK(notesOn(t[1]).empty());
+	CHECK(notesOn(drums).empty());
+
+	// mute it
+	psg.write(8, 0, 0.1);
+	psg.step(0.1, 100, clock, tp, drums);
+	CHECK(t[0].events.back().data[0] == 0x80);
+}

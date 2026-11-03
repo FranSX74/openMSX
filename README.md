@@ -186,6 +186,15 @@ the code here are my own work.
 
 ---
 
+### Real-time output (MIDI Tap, experimental)
+
+The extension `MIDI_Tap` (`-ext MIDI_Tap`) sends the PSG to a MIDI out connector while the MSX
+runs, a bit like the MIDI-PAC hardware. It uses the same conversion as the export, without the
+processing that needs to look ahead (arpeggio chords, glitch removal, percussion detection).
+Plug a MIDI out device into the connector `MIDI-Tap-out`, e.g. `plug MIDI-Tap-out midi-out-logger`
+(raw bytes to the file of `midi-out-logfilename`) or a host MIDI port. PSG A/B/C use MIDI channels
+1-3 (a second PSG 4-6) and the noise channel is on channel 10. SCC and MSX-Music are not supported yet.
+
 ## Español
 
 ### Qué hace
@@ -360,3 +369,14 @@ proyecto [MSX PicoVerse](https://github.com/cristianoag/msx-picoverse-public).
 No se ha copiado código de ninguno de los dos (el código de PicoVerse tiene una
 licencia no comercial incompatible con la GPL); los parámetros y el código de
 aquí son propios.
+
+### Salida en tiempo real (MIDI Tap, experimental)
+
+La extensión `MIDI_Tap` (`-ext MIDI_Tap`) envía el PSG a un conector MIDI out mientras el MSX
+funciona, algo parecido al hardware MIDI-PAC. Usa la misma conversión que la exportación, sin lo
+que necesita mirar hacia adelante (acordes de arpegio, descarte de glitches, detección de
+percusión). Conecta un dispositivo MIDI out al conector `MIDI-Tap-out`, por ejemplo
+`plug MIDI-Tap-out midi-out-logger` (bytes en bruto al fichero de `midi-out-logfilename`) o un
+puerto MIDI del equipo. PSG A/B/C usan los canales MIDI 1-3 (un segundo PSG, 4-6) y el ruido el
+canal 10. El SCC y el MSX-Music aún no están soportados.
+
