@@ -50,6 +50,10 @@ static constexpr int DRUM_MAX_STEPS = 12; // 60 ms
 // Envelope cycles shorter than this are "buzzer" sounds: they are rendered
 // with a constant volume instead of a million volume changes.
 static constexpr double BUZZ_CYCLE_SECONDS = 0.02;
+// A repeating envelope with a cycle shorter than this, combined with a tone
+// that is a harmonic of it (or no tone), is a buzzer bass: its pitch is the
+// envelope repetition rate.
+static constexpr double BUZZ_BASS_CYCLE_SECONDS = 0.06;
 // Number of MIDI channels available for melodic voices (16 minus drums).
 static constexpr size_t MELODIC_CHANNELS = 15;
 static constexpr uint8_t DRUM_CHANNEL = 9;
@@ -674,31 +678,46 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				unsigned envShape = regs[13] & 0x0F;
 				unsigned envPeriod = std::max(1u, unsigned(regs[11] | (regs[12] << 8)));
 				double envStepSeconds = 16.0 * envPeriod / double(clock);
-				bool buzz = (envShape >= 8 && !(envShape & 1)) &&
+				bool envRepeats = envShape >= 8 && !(envShape & 1);
+				double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
+				bool buzz = envRepeats &&
 				            (16.0 * envStepSeconds < BUZZ_CYCLE_SECONDS);
 
 				for (unsigned v = 0; v < 3; ++v) {
+					bool toneOn  = !(mixer & (1u << v));
+					bool noiseOn = !(mixer & (8u << v));
+					unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
+
+					// Buzzer bass: repeating envelope, no noise, and either no tone
+					// or a tone that is a harmonic of the envelope.
+					bool usesEnv = regs[8 + v] & 0x10;
+					bool envBass = false;
+					double envFreq = 0.0;
+					if (usesEnv && envRepeats && !noiseOn &&
+					    envSteps * envStepSeconds < BUZZ_BASS_CYCLE_SECONDS) {
+						envFreq = 1.0 / (envSteps * envStepSeconds);
+						if (!toneOn) {
+							envBass = true;
+						} else if (period >= MIN_PERIOD) {
+							double r = (double(clock) / (16.0 * period)) / envFreq;
+							envBass = r >= 1.5 &&
+							          std::abs(r - std::round(r)) <= 0.1 + 0.02 * r;
+						}
+					}
+
 					unsigned level = regs[8 + v] & 0x0F;
-					if (regs[8 + v] & 0x10) {
-						if (buzz) {
+					if (usesEnv) {
+						if (buzz || envBass) {
 							level = 11;
 						} else {
 							auto stepNo = uint64_t(std::max(0.0, g - envStart) / envStepSeconds);
 							level = envelopeLevel(envShape, stepNo);
 						}
 					}
-					bool toneOn  = !(mixer & (1u << v));
-					bool noiseOn = !(mixer & (8u << v));
-					unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
-
-					// Buzzer bass: fast repeating envelope without tone and noise;
-					// the pitch is the envelope repetition rate.
-					bool envBass = buzz && (regs[8 + v] & 0x10) && !toneOn && !noiseOn;
 					bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
 					double fine = 0.0;
 					if (envBass) {
-						double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
-						fine = fineNoteForFrequency(double(clock) / (16.0 * envPeriod * envSteps));
+						fine = fineNoteForFrequency(envFreq);
 					} else if (active) {
 						fine = fineNoteForFrequency(double(clock) / (16.0 * period));
 					}
