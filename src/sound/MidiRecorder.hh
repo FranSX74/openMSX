@@ -96,6 +96,10 @@ public:
 	}
 	void sccReset(unsigned id, EmuTime time);
 
+	/** Write arpeggios (fast cycles through a few pitches) as chords. */
+	void setArpeggioChords(bool value) { arpeggioChords = value; }
+	[[nodiscard]] bool getArpeggioChords() const { return arpeggioChords; }
+
 	[[nodiscard]] bool isRecording() const { return recording; }
 	[[nodiscard]] const std::string& getFilename() const { return filename; }
 
@@ -130,6 +134,7 @@ private:
 	std::string filename;
 	EmuTime startTime = EmuTime::zero();
 	bool recording = false;
+	bool arpeggioChords = true;
 	std::unique_ptr<MidiRecordCmd> command;
 };
 

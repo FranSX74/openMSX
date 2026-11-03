@@ -54,6 +54,12 @@ static constexpr double BUZZ_CYCLE_SECONDS = 0.02;
 // that is a harmonic of it (or no tone), is a buzzer bass: its pitch is the
 // envelope repetition rate.
 static constexpr double BUZZ_BASS_CYCLE_SECONDS = 0.06;
+// Arpeggios: runs of very short notes that cycle through a few pitches are
+// written as one sustained chord (when enabled).
+static constexpr uint32_t ARP_NOTE_MAX_TICKS = 60;   // longest note in an arpeggio
+static constexpr uint32_t ARP_GAP_MAX_TICKS = 10;    // longest gap between its notes
+static constexpr size_t ARP_MIN_NOTES = 6;           // at least this many notes
+static constexpr size_t ARP_MAX_PITCHES = 4;         // at most this many different pitches
 // Number of MIDI channels available for melodic voices (16 minus drums).
 static constexpr size_t MELODIC_CHANNELS = 15;
 static constexpr uint8_t DRUM_CHANNEL = 9;
@@ -132,6 +138,124 @@ struct Track {
 	size_t used = 0; // number of notes/drum hits
 	std::vector<Event> events;
 };
+
+/** Replace arpeggios (see ARP_* constants) in a melodic track by chords. */
+void collapseArpeggios(Track& t)
+{
+	struct Note {
+		size_t on, off;
+		uint32_t t0, t1;
+		uint8_t pitch, vel;
+	};
+	constexpr size_t NONE = size_t(-1);
+	auto& ev = t.events;
+
+	std::vector<Note> notes;
+	std::array<size_t, 128> open;
+	open.fill(NONE);
+	for (size_t i = 0; i < ev.size(); ++i) {
+		const auto& e = ev[i];
+		uint8_t status = e.data[0] & 0xF0;
+		if (status != 0x80 && status != 0x90) continue;
+		uint8_t pitch = e.data[1] & 0x7F;
+		if (status == 0x90 && e.data[2] != 0) {
+			if (open[pitch] != NONE) continue;
+			open[pitch] = notes.size();
+			notes.push_back({i, NONE, e.tick, e.tick, pitch, e.data[2]});
+		} else if (open[pitch] != NONE) {
+			notes[open[pitch]].off = i;
+			notes[open[pitch]].t1 = e.tick;
+			open[pitch] = NONE;
+		}
+	}
+
+	std::vector<bool> removed(ev.size(), false);
+	std::vector<std::vector<Event>> insertBefore(ev.size());
+	bool changed = false;
+
+	auto emitChord = [&](size_t a, size_t b) {
+		std::array<uint8_t, ARP_MAX_PITCHES> pitches = {};
+		size_t distinct = 0;
+		unsigned vel = 0;
+		for (size_t k = a; k <= b; ++k) {
+			bool found = false;
+			for (size_t q = 0; q < distinct; ++q) found |= pitches[q] == notes[k].pitch;
+			if (!found) pitches[distinct++] = notes[k].pitch;
+			vel = std::max<unsigned>(vel, notes[k].vel);
+		}
+		if (distinct < 2 || b - a + 1 < ARP_MIN_NOTES) return;
+		uint32_t t0 = notes[a].t0, t1 = notes[b].t1;
+		for (size_t k = a; k <= b; ++k) {
+			removed[notes[k].on] = true;
+			removed[notes[k].off] = true;
+		}
+		// the pitch bends of the single notes (events are sorted by tick)
+		auto first = std::lower_bound(ev.begin(), ev.end(), t0,
+			[](const Event& e, uint32_t tick) { return e.tick < tick; });
+		for (auto it = first; it != ev.end() && it->tick < t1; ++it) {
+			if ((it->data[0] & 0xF0) == 0xE0) removed[size_t(it - ev.begin())] = true;
+		}
+		auto& before = insertBefore[notes[a].on];
+		before.push_back({t0, {0xE0, 0x00, 0x40}, 3}); // bend centered
+		for (size_t q = 0; q < distinct; ++q) {
+			before.push_back({t0, {0x90, pitches[q], uint8_t(vel)}, 3});
+		}
+		auto& after = insertBefore[notes[b].off];
+		for (size_t q = 0; q < distinct; ++q) {
+			after.push_back({t1, {0x80, pitches[q], 0}, 3});
+		}
+		changed = true;
+	};
+
+	size_t i = 0;
+	while (i < notes.size()) {
+		// find a run of short notes that follow each other closely
+		size_t j = i;
+		auto fits = [&](size_t k) {
+			return notes[k].off != NONE && notes[k].t1 - notes[k].t0 <= ARP_NOTE_MAX_TICKS;
+		};
+		if (!fits(i)) { ++i; continue; }
+		while (j + 1 < notes.size() && fits(j + 1) &&
+		       notes[j + 1].t0 - notes[j].t1 <= ARP_GAP_MAX_TICKS) ++j;
+		// cut the run into chords: a pitch that is not part of the current
+		// cycle starts a new chord once the cycle has been repeated
+		size_t segStart = i;
+		std::array<uint8_t, ARP_MAX_PITCHES> set = {};
+		size_t distinct = 0;
+		bool repeated = false;
+		for (size_t k = i; k <= j; ++k) {
+			bool found = false;
+			for (size_t q = 0; q < distinct; ++q) found |= set[q] == notes[k].pitch;
+			if (found) {
+				repeated = true;
+			} else if (distinct < ARP_MAX_PITCHES && !repeated) {
+				set[distinct++] = notes[k].pitch;
+			} else {
+				emitChord(segStart, k - 1);
+				segStart = k;
+				set = {};
+				set[0] = notes[k].pitch;
+				distinct = 1;
+				repeated = false;
+			}
+		}
+		if (repeated) emitChord(segStart, j);
+		i = j + 1;
+	}
+	if (!changed) return;
+
+	std::vector<Event> out;
+	out.reserve(ev.size());
+	for (size_t k = 0; k < ev.size(); ++k) {
+		out.insert(out.end(), insertBefore[k].begin(), insertBefore[k].end());
+		if (!removed[k]) out.push_back(ev[k]);
+	}
+	ev = std::move(out);
+	t.used = 0;
+	for (const auto& e : ev) {
+		if ((e.data[0] & 0xF0) == 0x90 && e.data[2] != 0) ++t.used;
+	}
+}
 
 void putVlq(std::string& s, uint32_t v)
 {
@@ -478,6 +602,15 @@ public:
 			}
 		} else if (sub == "stop") {
 			result = stopMessage(recorder.stop(motherBoard.getCurrentTime()));
+		} else if (sub == "arpeggio") {
+			checkNumArgs(tokens, Between{2, 3}, "arpeggio ?on|off?");
+			if (tokens.size() == 3) {
+				auto v = tokens[2].getString();
+				if (v == "on") recorder.setArpeggioChords(true);
+				else if (v == "off") recorder.setArpeggioChords(false);
+				else throw CommandException("Expected on or off, got: ", v);
+			}
+			result = recorder.getArpeggioChords() ? "on" : "off";
 		} else if (sub == "status") {
 			result = recorder.isRecording()
 			       ? strCat("recording to ", recorder.getFilename())
@@ -493,13 +626,17 @@ public:
 		       "                              (without filename: next free openmsx0001.mid)\n"
 		       "midi_record stop               stop recording and write the file(s)\n"
 		       "midi_record toggle             start (automatic name) or stop\n"
-		       "midi_record status             show whether a recording is active\n";
+		       "midi_record status             show whether a recording is active\n"
+		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
+		       "                              fast single notes (off)\n";
 	}
 
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 4>{"start", "stop", "toggle", "status"});
+			completeString(tokens, std::array<std::string_view, 5>{"start", "stop", "toggle", "status", "arpeggio"});
+		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
+			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
 		} else if (tokens.size() == 3 && tokens[1] == "start") {
 			completeFileName(tokens, userFileContext());
 		}
@@ -887,6 +1024,12 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			}
 			for (unsigned c = 0; c < 9; ++c) tone[c].finish(*tt[c], endTick);
 			for (auto& d : drums) d.release(*drumTrack, endTick);
+		}
+	}
+
+	if (arpeggioChords) {
+		for (auto& t : tracks) {
+			if (t.melodic) collapseArpeggios(t);
 		}
 	}
 

@@ -39,6 +39,7 @@ midi_record start my_song.mid  ;# explicit name (relative names go in the midi f
 midi_record stop               ;# stop and write the file(s)
 midi_record toggle             ;# start (automatic name) or stop
 midi_record status
+midi_record arpeggio on|off    ;# arpeggios as chords (default) or as fast notes
 ```
 
 **GUI:** *Tools → Capture → MIDI (PSG)...* opens a small window with a name
@@ -84,6 +85,10 @@ The chip state is sampled every 5 ms from the logged register writes.
   repeating envelopes are rendered with a constant volume. When the tone and
   noise are off, the envelope repetition rate is the pitch (buzzer bass) and
   it is written as a Synth Bass note.
+- **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches, at
+  least 6 notes) are written as one sustained chord, because a chip voice that
+  cycles through a chord every frame is heard as that chord. Slow patterns and
+  sweeps are left alone. `midi_record arpeggio off` writes every note instead.
 - **PSG noise** becomes GM drums in 6 bands (hi-hats, snare, toms, bass drum).
 - **MSX-Music**: the 15 built-in instruments are mapped to General MIDI
   programs, key-on edges are tracked so a quick off/on of the same note is a new
@@ -173,6 +178,7 @@ midi_record start mi_cancion.mid  ;# nombre propio (los relativos van a la carpe
 midi_record stop               ;# parar y escribir el/los archivo(s)
 midi_record toggle             ;# empezar (nombre automático) o parar
 midi_record status
+midi_record arpeggio on|off    ;# arpegios como acordes (por defecto) o como notas rápidas
 ```
 
 **Interfaz:** *Tools → Capture → MIDI (PSG)...* abre una ventana con el nombre,
@@ -219,6 +225,11 @@ registradas.
   repetidas muy rápidas se dejan a volumen constante. Si el tono y el ruido
   están apagados, la frecuencia de repetición de la envolvente es la altura
   (bajo "buzzer") y se escribe como una nota de Synth Bass.
+- **Los arpegios** (tandas de notas de como mucho 60 ms que ciclan entre 2 y 4
+  alturas, al menos 6 notas) se escriben como un único acorde sostenido, porque
+  una voz del chip que recorre un acorde en cada fotograma se oye como ese
+  acorde. Los patrones lentos y los barridos no se tocan. `midi_record arpeggio
+  off` escribe todas las notas.
 - **El ruido del PSG** pasa a batería GM en 6 bandas (hi-hats, caja, toms, bombo).
 - **MSX-Music**: los 15 instrumentos internos se asignan a programas General
   MIDI, se vigilan los flancos de key-on para que un apagado/encendido rápido
