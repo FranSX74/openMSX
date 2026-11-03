@@ -775,15 +775,15 @@ public:
 				else throw CommandException("Expected on or off, got: ", v);
 			}
 			result = recorder.getArpeggioChords() ? "on" : "off";
-		} else if (sub == "sweeps") {
-			checkNumArgs(tokens, Between{2, 3}, "sweeps ?drums|notes?");
+		} else if (sub == "percussion") {
+			checkNumArgs(tokens, Between{2, 3}, "percussion ?on|off?");
 			if (tokens.size() == 3) {
 				auto v = tokens[2].getString();
-				if (v == "drums") recorder.setSweepDrums(true);
-				else if (v == "notes") recorder.setSweepDrums(false);
-				else throw CommandException("Expected drums or notes, got: ", v);
+				if (v == "on") recorder.setDetectPercussion(true);
+				else if (v == "off") recorder.setDetectPercussion(false);
+				else throw CommandException("Expected on or off, got: ", v);
 			}
-			result = recorder.getSweepDrums() ? "drums" : "notes";
+			result = recorder.getDetectPercussion() ? "on" : "off";
 		} else if (sub == "detail") {
 			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
 			if (tokens.size() == 3) {
@@ -812,8 +812,8 @@ public:
 		       "midi_record detail ?full|simple?  full (default): as close to the chips as possible;\n"
 		       "                              simple: fewer, longer notes (no repeated notes, no\n"
 		       "                              pitch bend, no notes under 60 ms, arpeggios as chords)\n"
-		       "midi_record sweeps ?drums|notes?  write fast falling tones (drums made with a tone)\n"
-		       "                              as drum hits (always in simple) or as notes (default)\n"
+		       "midi_record percussion ?on|off?  detect drums made with a fast falling tone and\n"
+		       "                              write them as drum hits (default: off, plain notes)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -821,9 +821,9 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 7>{"start", "stop", "toggle", "status", "arpeggio", "detail", "sweeps"});
-		} else if (tokens.size() == 3 && tokens[1] == "sweeps") {
-			completeString(tokens, std::array<std::string_view, 2>{"drums", "notes"});
+			completeString(tokens, std::array<std::string_view, 7>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion"});
+		} else if (tokens.size() == 3 && tokens[1] == "percussion") {
+			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
 		} else if (tokens.size() == 3 && tokens[1] == "detail") {
 			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
@@ -1084,7 +1084,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				tone[v].finish(*tt[v], endTick);
 				noise[v].release(*drumTrack, endTick);
 			}
-			if (sweepDrums || detail == Detail::SIMPLE) {
+			if (detectPercussion) {
 				for (unsigned v = 0; v < 3; ++v) {
 					// Arpeggios first: their falling parts are not drums.
 					collapseArpeggios(*tt[v]);

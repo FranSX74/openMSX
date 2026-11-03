@@ -40,7 +40,7 @@ midi_record stop               ;# stop and write the file(s)
 midi_record toggle             ;# start (automatic name) or stop
 midi_record status
 midi_record detail full|simple ;# full (default): as the chips; simple: fewer, longer notes
-midi_record sweeps drums|notes ;# falling-tone drums as drum hits (always in simple) or notes
+midi_record percussion on|off  ;# detect falling-tone drums and write them as drum hits (off)
 midi_record arpeggio on|off    ;# arpeggios as chords (default) or as fast notes
 ```
 
@@ -93,11 +93,14 @@ The chip state is sampled every 5 ms from the logged register writes.
   The same goes for a flutter: a game that alternates the volume every frame
   (down 2+ levels, up 2+ levels) is heard as very fast repeated notes, and
   that is what is written.
-- **Pitch-drop drums:** many games make a snare or bass drum with a tone that
-  falls fast (3+ notes of at most 40 ms, dropping 6+ semitones). With
-  `midi_record sweeps drums` (and always in `simple`) they are written as a drum
-  hit on the drum channel (snare if the run starts at note 55 or higher, bass
-  drum below) instead of melody notes. Arpeggios are converted to chords first.
+- **Pitch-drop drums** (optional, off by default): many games make a snare or
+  bass drum with a tone that falls fast (3+ notes of at most 40 ms, dropping 6+
+  semitones). With `midi_record percussion on` (or the *Detect percussion*
+  checkbox) they are written as a drum hit on the drum channel (snare if the run
+  starts at note 55 or higher, bass drum below) instead of melody notes.
+  Arpeggios are converted to chords first. The guess can be wrong, which is why
+  it is optional. In `simple` detail, with this off, those short notes are
+  dropped like any note under 60 ms.
 - **Glitches:** notes shorter than 10 ms are dropped. The chips are updated
   at most every 20 ms, so those come from reading a period between the writes
   of its two bytes.
@@ -200,7 +203,7 @@ midi_record stop               ;# parar y escribir el/los archivo(s)
 midi_record toggle             ;# empezar (nombre automático) o parar
 midi_record status
 midi_record detail full|simple ;# full (por defecto): como los chips; simple: menos notas, más largas
-midi_record sweeps drums|notes ;# percusión de tono descendente como golpes (siempre en simple) o notas
+midi_record percussion on|off  ;# detectar percusión de tono descendente y escribirla como golpes (off)
 midi_record arpeggio on|off    ;# arpegios como acordes (por defecto) o como notas rápidas
 ```
 
@@ -254,12 +257,15 @@ registradas.
   Igual con el parpadeo: un juego que alterna el volumen en cada fotograma
   (baja 2 o más niveles, sube 2 o más) se oye como notas repetidas muy deprisa,
   y eso es lo que se escribe.
-- **Percusión de tono descendente:** muchos juegos hacen una caja o un bombo con
-  un tono que cae muy deprisa (3 o más notas de como mucho 40 ms que bajan 6 o
-  más semitonos). Con `midi_record sweeps drums` (y siempre en `simple`) se
-  escriben como un golpe en el canal de percusión (caja si la tanda empieza en
-  la nota 55 o más, bombo si empieza más abajo) en lugar de notas de melodía.
-  Antes se convierten los arpegios en acordes.
+- **Percusión de tono descendente** (opcional, desactivada por defecto): muchos
+  juegos hacen una caja o un bombo con un tono que cae muy deprisa (3 o más
+  notas de como mucho 40 ms que bajan 6 o más semitonos). Con
+  `midi_record percussion on` (o la casilla *Detect percussion*) se escriben como
+  un golpe en el canal de percusión (caja si la tanda empieza en la nota 55 o
+  más, bombo si empieza más abajo) en lugar de notas de melodía. Antes se
+  convierten los arpegios en acordes. La detección puede equivocarse, por eso es
+  opcional. En el detalle `simple`, con esto desactivado, esas notas cortas se
+  descartan como cualquier nota de menos de 60 ms.
 - **Glitches:** se descartan las notas de menos de 10 ms. Los chips se actualizan
   como mucho cada 20 ms, así que salen de leer un periodo entre las escrituras
   de sus dos bytes.

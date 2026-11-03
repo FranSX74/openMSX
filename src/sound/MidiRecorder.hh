@@ -103,10 +103,10 @@ public:
 	void setArpeggioChords(bool value) { arpeggioChords = value; }
 	[[nodiscard]] bool getArpeggioChords() const { return arpeggioChords; }
 
-	/** Write fast descending runs of short notes (a drum made with a falling
-	  * tone) as drum hits. Always on in the simple detail. */
-	void setSweepDrums(bool value) { sweepDrums = value; }
-	[[nodiscard]] bool getSweepDrums() const { return sweepDrums; }
+	/** Detect drums made with a fast falling tone (runs of short descending
+	  * notes) and write them as drum hits instead of notes. */
+	void setDetectPercussion(bool value) { detectPercussion = value; }
+	[[nodiscard]] bool getDetectPercussion() const { return detectPercussion; }
 
 	void setDetail(Detail value) { detail = value; }
 	[[nodiscard]] Detail getDetail() const { return detail; }
@@ -146,7 +146,7 @@ private:
 	EmuTime startTime = EmuTime::zero();
 	bool recording = false;
 	bool arpeggioChords = true;
-	bool sweepDrums = false;
+	bool detectPercussion = false;
 	Detail detail = Detail::FULL;
 	std::unique_ptr<MidiRecordCmd> command;
 };

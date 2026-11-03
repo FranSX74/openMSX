@@ -458,6 +458,13 @@ void ImGuiTools::paintMidiRecord()
 			HelpMarker("Fewer, longer notes that are easier to edit: no repeated notes, no pitch bend, "
 			           "no notes shorter than 60 ms, arpeggios as chords.");
 			if (changed) recorder.setDetail(MidiRecorder::Detail(detail));
+			bool percussion = recorder.getDetectPercussion();
+			if (ImGui::Checkbox("Detect percussion", &percussion)) {
+				recorder.setDetectPercussion(percussion);
+			}
+			HelpMarker("Some games make a snare or bass drum with a tone that falls very fast. "
+			           "When enabled, these are written as drum hits instead of notes. "
+			           "It can be wrong for some music, so it is off by default.");
 		});
 		if (recording && ImGui::Button("Stop")) {
 			manager.executeDelayed(makeTclList("midi_record", "stop"));
