@@ -92,6 +92,9 @@ The chip state is sampled every 5 ms from the logged register writes.
   The same goes for a flutter: a game that alternates the volume every frame
   (down 2+ levels, up 2+ levels) is heard as very fast repeated notes, and
   that is what is written.
+- **Glitches:** notes shorter than 10 ms are dropped. The chips are updated
+  at most every 20 ms, so those come from reading a period between the writes
+  of its two bytes.
 - **Detail.** `full` (default) writes everything above. `simple` is meant for
   tracks that are easier to read and edit: no repeated notes from volume
   attacks or flutter (the volume stays a volume change), no pitch bend, no
@@ -244,6 +247,9 @@ registradas.
   Igual con el parpadeo: un juego que alterna el volumen en cada fotograma
   (baja 2 o más niveles, sube 2 o más) se oye como notas repetidas muy deprisa,
   y eso es lo que se escribe.
+- **Glitches:** se descartan las notas de menos de 10 ms. Los chips se actualizan
+  como mucho cada 20 ms, así que salen de leer un periodo entre las escrituras
+  de sus dos bytes.
 - **Nivel de detalle.** `full` (por defecto) escribe todo lo anterior. `simple`
   sirve para pistas más fáciles de leer y de editar: sin notas repetidas por
   ataques o parpadeos de volumen (el volumen sigue siendo un cambio de volumen),

@@ -50,6 +50,10 @@ static constexpr int REATTACK_LEVELS = 4;
 static constexpr int FLUTTER_LEVELS = 2;
 // ... but not within this many grid steps (15 ms) of the start of the note.
 static constexpr int REATTACK_MIN_STEPS = 3;
+// Notes shorter than this are glitches (the game updates the chip at most
+// every frame, 20 ms; a pitch read between the writes of the low and the high
+// byte of a period shows up as a 5 ms note) and are always dropped.
+static constexpr uint32_t GLITCH_NOTE_TICKS = 10;
 // Simple detail: notes shorter than this are dropped.
 static constexpr uint32_t SIMPLE_MIN_NOTE_TICKS = 60;
 // General MIDI "Square Lead".
@@ -1115,9 +1119,10 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			if (t.melodic) collapseArpeggios(t);
 		}
 	}
-	if (detail == Detail::SIMPLE) {
-		for (auto& t : tracks) {
-			if (t.melodic) dropShortNotes(t, SIMPLE_MIN_NOTE_TICKS);
+	for (auto& t : tracks) {
+		if (t.melodic) {
+			dropShortNotes(t, detail == Detail::SIMPLE ? SIMPLE_MIN_NOTE_TICKS
+			                                           : GLITCH_NOTE_TICKS);
 		}
 	}
 
