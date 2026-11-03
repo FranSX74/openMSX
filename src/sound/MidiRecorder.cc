@@ -54,6 +54,17 @@ static constexpr int REATTACK_MIN_STEPS = 3;
 // every frame, 20 ms; a pitch read between the writes of the low and the high
 // byte of a period shows up as a 5 ms note) and are always dropped.
 static constexpr uint32_t GLITCH_NOTE_TICKS = 10;
+// Pitch-drop percussion: a fast descending run of short notes (a drum made
+// with a falling tone) can be written as a drum hit instead.
+static constexpr uint32_t SWEEP_NOTE_MAX_TICKS = 40;  // longest note in the run
+static constexpr uint32_t SWEEP_GAP_MAX_TICKS = 10;   // longest gap between its notes
+static constexpr uint32_t SWEEP_MAX_TICKS = 400;      // longest run
+static constexpr size_t SWEEP_MIN_NOTES = 3;
+static constexpr int SWEEP_MIN_DROP = 6;              // semitones from first to last
+static constexpr int SWEEP_SNARE_MIN_PITCH = 55;      // starts higher: snare, else bass drum
+static constexpr uint8_t DRUM_SNARE = 38;
+static constexpr uint8_t DRUM_BASS = 36;
+static constexpr uint32_t SWEEP_DRUM_TICKS = 60;      // length of the drum note
 // Simple detail: notes shorter than this are dropped.
 static constexpr uint32_t SIMPLE_MIN_NOTE_TICKS = 60;
 // General MIDI "Square Lead".
@@ -270,6 +281,89 @@ void collapseArpeggios(Track& t)
 	for (const auto& e : ev) {
 		if ((e.data[0] & 0xF0) == 0x90 && e.data[2] != 0) ++t.used;
 	}
+}
+
+/** Move the fast descending runs of short notes of a voice to the drum track
+  * as drum hits (see SWEEP_* constants). Returns the number of hits. */
+size_t sweepsToDrums(Track& voice, Track& drums)
+{
+	struct Note {
+		size_t on, off;
+		uint32_t t0, t1;
+		uint8_t pitch, vel;
+	};
+	constexpr size_t NONE = size_t(-1);
+	auto& ev = voice.events;
+
+	std::vector<Note> notes;
+	std::array<size_t, 128> open;
+	open.fill(NONE);
+	for (size_t i = 0; i < ev.size(); ++i) {
+		uint8_t status = ev[i].data[0] & 0xF0;
+		if (status != 0x80 && status != 0x90) continue;
+		uint8_t pitch = ev[i].data[1] & 0x7F;
+		if (status == 0x90 && ev[i].data[2] != 0) {
+			if (open[pitch] != NONE) continue;
+			open[pitch] = notes.size();
+			notes.push_back({i, NONE, ev[i].tick, ev[i].tick, pitch, ev[i].data[2]});
+		} else if (open[pitch] != NONE) {
+			notes[open[pitch]].off = i;
+			notes[open[pitch]].t1 = ev[i].tick;
+			open[pitch] = NONE;
+		}
+	}
+
+	std::vector<bool> removed(ev.size(), false);
+	size_t hits = 0;
+	auto fits = [&](size_t k) {
+		return notes[k].off != NONE && notes[k].t1 - notes[k].t0 <= SWEEP_NOTE_MAX_TICKS;
+	};
+	auto emit = [&](size_t a, size_t b) {
+		if (b - a + 1 < SWEEP_MIN_NOTES) return;
+		if (int(notes[a].pitch) - int(notes[b].pitch) < SWEEP_MIN_DROP) return;
+		if (notes[b].t1 - notes[a].t0 > SWEEP_MAX_TICKS) return;
+		unsigned vel = 0;
+		for (size_t k = a; k <= b; ++k) {
+			removed[notes[k].on] = removed[notes[k].off] = true;
+			vel = std::max<unsigned>(vel, notes[k].vel);
+		}
+		uint32_t t0 = notes[a].t0, t1 = notes[b].t1;
+		auto first = std::lower_bound(ev.begin(), ev.end(), t0,
+			[](const Event& e, uint32_t tick) { return e.tick < tick; });
+		for (auto it = first; it != ev.end() && it->tick < t1; ++it) {
+			if ((it->data[0] & 0xF0) == 0xE0) removed[size_t(it - ev.begin())] = true;
+		}
+		uint8_t drum = (notes[a].pitch >= SWEEP_SNARE_MIN_PITCH) ? DRUM_SNARE : DRUM_BASS;
+		drums.add(t0, 0x90, drum, uint8_t(vel));
+		drums.add(t0 + SWEEP_DRUM_TICKS, 0x80, drum, 0);
+		++drums.used;
+		++hits;
+	};
+
+	size_t i = 0;
+	while (i < notes.size()) {
+		if (!fits(i)) { ++i; continue; }
+		size_t j = i;
+		while (j + 1 < notes.size() && fits(j + 1) &&
+		       notes[j + 1].t0 - notes[j].t1 <= SWEEP_GAP_MAX_TICKS &&
+		       notes[j + 1].pitch < notes[j].pitch) ++j;
+		emit(i, j);
+		i = j + 1;
+	}
+	if (hits == 0) return 0;
+
+	std::vector<Event> out;
+	out.reserve(ev.size());
+	for (size_t k = 0; k < ev.size(); ++k) {
+		if (!removed[k]) out.push_back(ev[k]);
+	}
+	ev = std::move(out);
+	voice.used = 0;
+	for (const auto& e : ev) {
+		if ((e.data[0] & 0xF0) == 0x90 && e.data[2] != 0) ++voice.used;
+	}
+	std::ranges::stable_sort(drums.events, {}, &Event::tick);
+	return hits;
 }
 
 /** Remove the notes that are shorter than 'minTicks'. */
@@ -681,6 +775,15 @@ public:
 				else throw CommandException("Expected on or off, got: ", v);
 			}
 			result = recorder.getArpeggioChords() ? "on" : "off";
+		} else if (sub == "sweeps") {
+			checkNumArgs(tokens, Between{2, 3}, "sweeps ?drums|notes?");
+			if (tokens.size() == 3) {
+				auto v = tokens[2].getString();
+				if (v == "drums") recorder.setSweepDrums(true);
+				else if (v == "notes") recorder.setSweepDrums(false);
+				else throw CommandException("Expected drums or notes, got: ", v);
+			}
+			result = recorder.getSweepDrums() ? "drums" : "notes";
 		} else if (sub == "detail") {
 			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
 			if (tokens.size() == 3) {
@@ -709,6 +812,8 @@ public:
 		       "midi_record detail ?full|simple?  full (default): as close to the chips as possible;\n"
 		       "                              simple: fewer, longer notes (no repeated notes, no\n"
 		       "                              pitch bend, no notes under 60 ms, arpeggios as chords)\n"
+		       "midi_record sweeps ?drums|notes?  write fast falling tones (drums made with a tone)\n"
+		       "                              as drum hits (always in simple) or as notes (default)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -716,7 +821,9 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 6>{"start", "stop", "toggle", "status", "arpeggio", "detail"});
+			completeString(tokens, std::array<std::string_view, 7>{"start", "stop", "toggle", "status", "arpeggio", "detail", "sweeps"});
+		} else if (tokens.size() == 3 && tokens[1] == "sweeps") {
+			completeString(tokens, std::array<std::string_view, 2>{"drums", "notes"});
 		} else if (tokens.size() == 3 && tokens[1] == "detail") {
 			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
@@ -976,6 +1083,13 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			for (unsigned v = 0; v < 3; ++v) {
 				tone[v].finish(*tt[v], endTick);
 				noise[v].release(*drumTrack, endTick);
+			}
+			if (sweepDrums || detail == Detail::SIMPLE) {
+				for (unsigned v = 0; v < 3; ++v) {
+					// Arpeggios first: their falling parts are not drums.
+					collapseArpeggios(*tt[v]);
+					sweepsToDrums(*tt[v], *drumTrack);
+				}
 			}
 		} else if (chips[id].kind == Chip::SCC) {
 			// ------------------------------------------------ SCC ----
