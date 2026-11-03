@@ -13,6 +13,7 @@
 #include <cassert>
 #include <cmath>
 #include <fstream>
+#include <numbers>
 #include <optional>
 
 namespace openmsx {
@@ -201,7 +202,8 @@ void writeMidiFile(const std::string& filename,
 	}
 	for (const auto* t : tracks) writeTrack(out, *t, endTick);
 
-	std::ofstream file(filename, std::ios::binary | std::ios::trunc);
+	std::ofstream file;
+	FileOperations::openOfStream(file, filename, std::ios::binary | std::ios::trunc);
 	if (!file) throw CommandException("Cannot write to ", filename);
 	file.write(out.data(), std::streamsize(out.size()));
 	if (!file) throw CommandException("Error writing ", filename);
@@ -387,7 +389,7 @@ WaveInfo classifyWave(const uint8_t* raw)
 	for (unsigned k = 1; k <= 15; ++k) {
 		double re = 0.0, im = 0.0;
 		for (unsigned i = 0; i < 32; ++i) {
-			double a = 2.0 * M_PI * k * i / 32.0;
+			double a = 2.0 * std::numbers::pi * k * i / 32.0;
 			re += w[i] * std::cos(a);
 			im += w[i] * std::sin(a);
 		}
@@ -569,7 +571,8 @@ void MidiRecorder::start(const std::string& file, EmuTime time)
 	}
 	// Check early that the file can be created.
 	{
-		std::ofstream test(file, std::ios::binary | std::ios::app);
+		std::ofstream test;
+		FileOperations::openOfStream(test, file, std::ios::binary | std::ios::app);
 		if (!test) throw CommandException("Cannot write to ", file);
 	}
 	filename = file;
