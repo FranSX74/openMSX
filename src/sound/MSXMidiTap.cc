@@ -15,13 +15,13 @@ static constexpr double SCC_CLOCK = OPLL_CLOCK; // as logged by MidiRecorder
 // -- the chips --
 
 struct MSXMidiTap::PsgState final : ChipState {
-	PsgState(unsigned id_, const std::array<int, 3>& ch)
-		: ChipState(id_), converter(true), noise("noise", Track::Group::PSG_SCC, false) {
+	PsgState(unsigned id_, const std::array<int, 3>& ch, uint8_t volume)
+		: ChipState(id_, MidiRecorder::Chip::PSG), converter(true), noise("noise", Track::Group::PSG_SCC, false) {
 		static constexpr std::array<uint8_t, 3> pan = {40, 64, 88};
 		static constexpr std::array<const char*, 3> name = {"A", "B", "C"};
 		for (unsigned v = 0; v < 3; ++v) {
 			tracks.emplace_back(name[v], Track::Group::PSG_SCC, true);
-			tracks.back().setup(PROGRAM_SQUARE_LEAD, pan[v]);
+			tracks.back().setup(PROGRAM_SQUARE_LEAD, pan[v], volume);
 			channels.push_back(ch[v]);
 		}
 		drums = &noise;
@@ -38,11 +38,11 @@ struct MSXMidiTap::PsgState final : ChipState {
 };
 
 struct MSXMidiTap::SccState final : ChipState {
-	SccState(unsigned id_, const std::array<int, 5>& ch)
-		: ChipState(id_), converter(true) {
+	SccState(unsigned id_, const std::array<int, 5>& ch, uint8_t volume)
+		: ChipState(id_, MidiRecorder::Chip::SCC), converter(true) {
 		for (unsigned c = 0; c < 5; ++c) {
 			tracks.emplace_back("SCC", Track::Group::PSG_SCC, true);
-			tracks.back().setup(PROGRAM_SQUARE_LEAD, 64);
+			tracks.back().setup(PROGRAM_SQUARE_LEAD, 64, volume);
 			channels.push_back(ch[c]);
 		}
 	}
@@ -55,11 +55,11 @@ struct MSXMidiTap::SccState final : ChipState {
 };
 
 struct MSXMidiTap::OpllState final : ChipState {
-	OpllState(unsigned id_, const std::array<int, 9>& ch)
-		: ChipState(id_), converter(true), noise("rhythm", Track::Group::MSX_MUSIC, false) {
+	OpllState(unsigned id_, const std::array<int, 9>& ch, uint8_t volume)
+		: ChipState(id_, MidiRecorder::Chip::OPLL), converter(true), noise("rhythm", Track::Group::MSX_MUSIC, false) {
 		for (unsigned c = 0; c < 9; ++c) {
 			tracks.emplace_back("FM", Track::Group::MSX_MUSIC, true);
-			tracks.back().setup(OPLL_PROGRAMS[0], 64);
+			tracks.back().setup(OPLL_PROGRAMS[0], 64, volume);
 			channels.push_back(ch[c]);
 		}
 		drums = &noise;
@@ -117,7 +117,7 @@ void MSXMidiTap::psgWrite(unsigned id, unsigned reg, uint8_t value,
 	if (!psg) {
 		std::array<int, 3> ch;
 		for (auto& c : ch) c = allocateChannel();
-		chips.push_back(std::make_unique<PsgState>(id, ch));
+		chips.push_back(std::make_unique<PsgState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::PSG)));
 		psg = static_cast<PsgState*>(chips.back().get());
 	}
 	psg->clock = clock;
@@ -130,7 +130,7 @@ void MSXMidiTap::sccWrite(unsigned id, unsigned reg, uint8_t value, EmuTime /*ti
 	if (!scc) {
 		std::array<int, 5> ch;
 		for (auto& c : ch) c = allocateChannel();
-		chips.push_back(std::make_unique<SccState>(id, ch));
+		chips.push_back(std::make_unique<SccState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::SCC)));
 		scc = static_cast<SccState*>(chips.back().get());
 	}
 	scc->converter.write(reg, value);
@@ -142,10 +142,22 @@ void MSXMidiTap::opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime /*t
 	if (!opll) {
 		std::array<int, 9> ch;
 		for (auto& c : ch) c = allocateChannel();
-		chips.push_back(std::make_unique<OpllState>(id, ch));
+		chips.push_back(std::make_unique<OpllState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::OPLL)));
 		opll = static_cast<OpllState*>(chips.back().get());
 	}
 	opll->converter.write(reg, value);
+}
+
+void MSXMidiTap::volumesChanged(EmuTime time)
+{
+	const auto& recorder = getMotherBoard().getMidiRecorder();
+	for (auto& chip : chips) {
+		auto volume = recorder.getVolume(chip->kind);
+		for (size_t i = 0; i < chip->tracks.size(); ++i) {
+			chip->tracks[i].add(0, 0xB0, 7, volume);
+		}
+	}
+	flush(time);
 }
 
 void MSXMidiTap::step(EmuTime time)

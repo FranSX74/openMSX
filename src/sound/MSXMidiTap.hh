@@ -38,12 +38,13 @@ public:
 private:
 	/** The converter and the MIDI tracks (used as event buffers) of one chip. */
 	struct ChipState {
-		ChipState(unsigned id_) : id(id_) {}
+		ChipState(unsigned id_, MidiRecorder::Chip kind_) : id(id_), kind(kind_) {}
 		virtual ~ChipState() = default;
 		virtual void step(double g) = 0;
 		virtual void finish() = 0;
 
 		unsigned id;
+		MidiRecorder::Chip kind;
 		std::vector<midi::Track> tracks;
 		std::vector<int> channels; // MIDI channel of every track, -1: none
 		midi::Track* drums = nullptr; // not in 'tracks' for the PSG and OPLL
@@ -57,6 +58,7 @@ private:
 	              float clock, EmuTime time) override;
 	void sccWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time) override;
 	void opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time) override;
+	void volumesChanged(EmuTime time) override;
 
 	template<typename T> [[nodiscard]] T* find(unsigned id);
 	template<typename T> T* create(unsigned id);

@@ -90,6 +90,20 @@ public:
 				else throw CommandException("Expected on or off, got: ", v);
 			}
 			result = recorder.getDetectPercussion() ? "on" : "off";
+		} else if (sub == "volume") {
+			checkNumArgs(tokens, Between{3, 4}, "volume psg|scc|opll ?0-127?");
+			auto chipName = tokens[2].getString();
+			MidiRecorder::Chip chip;
+			if (chipName == "psg") chip = MidiRecorder::Chip::PSG;
+			else if (chipName == "scc") chip = MidiRecorder::Chip::SCC;
+			else if (chipName == "opll" || chipName == "msx-music") chip = MidiRecorder::Chip::OPLL;
+			else throw CommandException("Expected psg, scc or opll, got: ", chipName);
+			if (tokens.size() == 4) {
+				auto v = tokens[3].getInt(getInterpreter());
+				if (v < 0 || v > 127) throw CommandException("Volume must be 0..127");
+				recorder.setVolume(chip, uint8_t(v), motherBoard.getCurrentTime());
+			}
+			result = int(recorder.getVolume(chip));
 		} else if (sub == "detail") {
 			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
 			if (tokens.size() == 3) {
@@ -120,6 +134,8 @@ public:
 		       "                              pitch bend, no notes under 60 ms, arpeggios as chords)\n"
 		       "midi_record percussion ?on|off?  detect drums made with a fast falling tone and\n"
 		       "                              write them as drum hits (default: off, plain notes)\n"
+		       "midi_record volume psg|scc|opll ?0-127?  channel volume (CC#7) of the voices of a\n"
+		       "                              chip, to balance them (defaults 85, 120, 100)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -127,9 +143,11 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 7>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion"});
+			completeString(tokens, std::array<std::string_view, 8>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion", "volume"});
 		} else if (tokens.size() == 3 && tokens[1] == "percussion") {
 			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
+		} else if (tokens.size() == 3 && tokens[1] == "volume") {
+			completeString(tokens, std::array<std::string_view, 3>{"psg", "scc", "opll"});
 		} else if (tokens.size() == 3 && tokens[1] == "detail") {
 			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
@@ -286,7 +304,8 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				tracks.emplace_back(strCat("PSG", suffix, " ", voiceNames[v]),
 				                    Group::PSG_SCC, true);
 				tracks.back().setup(PROGRAM_SQUARE_LEAD,
-				                    uint8_t(v == 0 ? 40 : v == 1 ? 64 : 88));
+				                    uint8_t(v == 0 ? 40 : v == 1 ? 64 : 88),
+				                    volumes[unsigned(Chip::PSG)]);
 				tt[v] = &tracks.back();
 			}
 			tracks.emplace_back(strCat("PSG", suffix, " noise"), Group::PSG_SCC, false);
@@ -318,7 +337,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			std::array<Track*, 5> tt = {};
 			for (unsigned c = 0; c < 5; ++c) {
 				tracks.emplace_back(strCat("SCC ", suffix, c + 1), Group::PSG_SCC, true);
-				tracks.back().setup(PROGRAM_SQUARE_LEAD, 64);
+				tracks.back().setup(PROGRAM_SQUARE_LEAD, 64, volumes[unsigned(Chip::SCC)]);
 				tt[c] = &tracks.back();
 			}
 			Track* sccDrums = nullptr;
@@ -351,7 +370,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			for (unsigned c = 0; c < 9; ++c) {
 				tracks.emplace_back(strCat("MSX-Music ", suffix, c + 1),
 				                    Group::MSX_MUSIC, true);
-				tracks.back().setup(OPLL_PROGRAMS[0], 64);
+				tracks.back().setup(OPLL_PROGRAMS[0], 64, volumes[unsigned(Chip::OPLL)]);
 				tt[c] = &tracks.back();
 			}
 			tracks.emplace_back(strCat("MSX-Music ", suffix, "rhythm"),

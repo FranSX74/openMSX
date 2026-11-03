@@ -84,6 +84,11 @@ inline constexpr size_t ARP_MIN_NOTES = 4;           // at least this many notes
 inline constexpr size_t ARP_MAX_PITCHES = 4;         // at most this many different pitches
 // Number of MIDI channels available for melodic voices (16 minus drums).
 inline constexpr size_t MELODIC_CHANNELS = 15;
+/** Default channel volume (CC#7) for the PSG, SCC and MSX-Music. The SCC is
+  * mixed louder than the PSG in the MIDI output because its waves are not
+  * as loud as the PSG square waves and the drums of a General MIDI sound
+  * font. */
+inline constexpr std::array<uint8_t, 3> DEFAULT_CHANNEL_VOLUME = {85, 120, 100};
 inline constexpr uint8_t DRUM_CHANNEL = 9;
 
 // YM2413 (MSX-Music)
@@ -152,9 +157,9 @@ struct Track {
 	void add2(uint32_t tick, uint8_t status, uint8_t d1) {
 		events.push_back({tick, {status, d1, 0}, 2});
 	}
-	void setup(uint8_t program, uint8_t pan) {
+	void setup(uint8_t program, uint8_t pan, uint8_t volume = 100) {
 		add2(0, 0xC0, program);
-		add(0, 0xB0, 7, 100);
+		add(0, 0xB0, 7, volume);
 		add(0, 0xB0, 10, pan);
 		add(0, 0xB0, 11, 0);
 		// RPN 0: pitch bend range

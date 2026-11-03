@@ -2,6 +2,7 @@
 #define MIDIRECORDER_HH
 
 #include "EmuTime.hh"
+#include "MidiConvert.hh"
 
 #include <array>
 #include <cstddef>
@@ -50,6 +51,8 @@ public:
 		/** YM2413 register 0x00..0x3F. */
 		virtual void opllWrite(unsigned id, unsigned reg, uint8_t value,
 		                       EmuTime time) = 0;
+		/** The channel volumes (setVolume) changed. */
+		virtual void volumesChanged(EmuTime time) = 0;
 	protected:
 		~Listener() = default;
 	};
@@ -118,6 +121,13 @@ public:
 	}
 	void sccReset(unsigned id, EmuTime time);
 
+	/** Channel volume (MIDI CC#7, 0..127) of the voices of a chip. */
+	void setVolume(Chip chip, uint8_t value, EmuTime time) {
+		volumes[unsigned(chip)] = value;
+		for (auto* l : listeners) l->volumesChanged(time);
+	}
+	[[nodiscard]] uint8_t getVolume(Chip chip) const { return volumes[unsigned(chip)]; }
+
 	void addListener(Listener* l) { listeners.push_back(l); }
 	void removeListener(Listener* l) { std::erase(listeners, l); }
 
@@ -164,6 +174,7 @@ private:
 	MSXMotherBoard& motherBoard;
 	std::vector<ChipState> chips;
 	std::vector<Listener*> listeners;
+	std::array<uint8_t, 3> volumes = midi::DEFAULT_CHANNEL_VOLUME;
 	std::vector<LogEntry> entries;
 	std::string filename;
 	EmuTime startTime = EmuTime::zero();
