@@ -84,7 +84,7 @@ static constexpr double BUZZ_BASS_CYCLE_SECONDS = 0.06;
 // written as one sustained chord (when enabled).
 static constexpr uint32_t ARP_NOTE_MAX_TICKS = 60;   // longest note in an arpeggio
 static constexpr uint32_t ARP_GAP_MAX_TICKS = 10;    // longest gap between its notes
-static constexpr size_t ARP_MIN_NOTES = 6;           // at least this many notes
+static constexpr size_t ARP_MIN_NOTES = 4;           // at least this many notes (and two cycles)
 static constexpr size_t ARP_MAX_PITCHES = 4;         // at most this many different pitches
 // Number of MIDI channels available for melodic voices (16 minus drums).
 static constexpr size_t MELODIC_CHANNELS = 15;
@@ -209,7 +209,7 @@ void collapseArpeggios(Track& t)
 			if (!found) pitches[distinct++] = notes[k].pitch;
 			vel = std::max<unsigned>(vel, notes[k].vel);
 		}
-		if (distinct < 2 || b - a + 1 < ARP_MIN_NOTES) return;
+		if (distinct < 2 || b - a + 1 < std::max(ARP_MIN_NOTES, 2 * distinct)) return;
 		uint32_t t0 = notes[a].t0, t1 = notes[b].t1;
 		for (size_t k = a; k <= b; ++k) {
 			removed[notes[k].on] = true;
@@ -1100,6 +1100,11 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				tracks.back().setup(PROGRAM_SQUARE_LEAD, 64);
 				tt[c] = &tracks.back();
 			}
+			Track* sccDrums = nullptr;
+			if (detectPercussion) {
+				tracks.emplace_back(strCat("SCC ", suffix, "drums"), Group::PSG_SCC, false);
+				sccDrums = &tracks.back();
+			}
 			std::array<uint8_t, 256> regs = {};
 			std::array<bool, 5> dirty;
 			dirty.fill(true);
@@ -1136,6 +1141,12 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				}
 			}
 			for (unsigned c = 0; c < 5; ++c) tone[c].finish(*tt[c], endTick);
+			if (sccDrums) {
+				for (unsigned c = 0; c < 5; ++c) {
+					collapseArpeggios(*tt[c]);
+					sweepsToDrums(*tt[c], *sccDrums);
+				}
+			}
 		} else {
 			// ---------------------------------------------- OPLL ----
 			auto suffix = (numOpll > 1) ? strCat(++opllIndex, " ") : std::string();

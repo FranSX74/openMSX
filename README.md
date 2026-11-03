@@ -95,7 +95,7 @@ The chip state is sampled every 5 ms from the logged register writes.
   that is what is written.
 - **Pitch-drop drums** (optional, off by default): many games make a snare or
   bass drum with a tone that falls fast (3+ notes of at most 40 ms, dropping 6+
-  semitones). With `midi_record percussion on` (or the *Detect percussion*
+  semitones), on the PSG and on the SCC (which then gets a *drums* track). With `midi_record percussion on` (or the *Detect percussion*
   checkbox) they are written as a drum hit on the drum channel (snare if the run
   starts at note 55 or higher, bass drum below) instead of melody notes.
   Arpeggios are converted to chords first. The guess can be wrong, which is why
@@ -109,8 +109,8 @@ The chip state is sampled every 5 ms from the logged register writes.
   attacks or flutter (the volume stays a volume change), no pitch bend, no
   notes shorter than 60 ms, and arpeggios are always chords. It is also a
   selector in the *Capture MIDI* window.
-- **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches, at
-  least 6 notes) are written as one sustained chord, because a chip voice that
+- **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches: at least
+  4 notes for 2 pitches, and always two full cycles) are written as one sustained chord, because a chip voice that
   cycles through a chord every frame is heard as that chord. Slow patterns and
   sweeps are left alone. `midi_record arpeggio off` writes every note instead.
 - **PSG noise** becomes GM drums in 6 bands (hi-hats, snare, toms, bass drum).
@@ -259,7 +259,8 @@ registradas.
   y eso es lo que se escribe.
 - **Percusión de tono descendente** (opcional, desactivada por defecto): muchos
   juegos hacen una caja o un bombo con un tono que cae muy deprisa (3 o más
-  notas de como mucho 40 ms que bajan 6 o más semitonos). Con
+  notas de como mucho 40 ms que bajan 6 o más semitonos), tanto en el PSG como
+  en el SCC (que entonces tiene una pista *drums*). Con
   `midi_record percussion on` (o la casilla *Detect percussion*) se escriben como
   un golpe en el canal de percusión (caja si la tanda empieza en la nota 55 o
   más, bombo si empieza más abajo) en lugar de notas de melodía. Antes se
@@ -275,7 +276,7 @@ registradas.
   sin pitch bend, sin notas de menos de 60 ms y con los arpegios siempre como
   acordes. También es un selector en la ventana *Capture MIDI*.
 - **Los arpegios** (tandas de notas de como mucho 60 ms que ciclan entre 2 y 4
-  alturas, al menos 6 notas) se escriben como un único acorde sostenido, porque
+  alturas: al menos 4 notas con 2 alturas, y siempre dos ciclos completos) se escriben como un único acorde sostenido, porque
   una voz del chip que recorre un acorde en cada fotograma se oye como ese
   acorde. Los patrones lentos y los barridos no se tocan. `midi_record arpeggio
   off` escribe todas las notas.
