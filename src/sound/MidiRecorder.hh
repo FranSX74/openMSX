@@ -44,6 +44,12 @@ public:
 	public:
 		virtual void psgWrite(unsigned id, unsigned reg, uint8_t value,
 		                      float clock, EmuTime time) = 0;
+		/** Same layout as sccWriteReg(). */
+		virtual void sccWrite(unsigned id, unsigned reg, uint8_t value,
+		                      EmuTime time) = 0;
+		/** YM2413 register 0x00..0x3F. */
+		virtual void opllWrite(unsigned id, unsigned reg, uint8_t value,
+		                       EmuTime time) = 0;
 	protected:
 		~Listener() = default;
 	};
@@ -97,6 +103,7 @@ public:
 		reg &= 0x3F;
 		s.regs[reg] = value;
 		if (recording) log(id, reg, value, s.clock, time);
+		for (auto* l : listeners) l->opllWrite(id, reg, value, time);
 	}
 	void opllReset(unsigned id, EmuTime time);
 
@@ -107,6 +114,7 @@ public:
 		auto& s = chips[id];
 		s.regs[reg & 0xFF] = value;
 		if (recording) log(id, reg & 0xFF, value, s.clock, time);
+		for (auto* l : listeners) l->sccWrite(id, reg & 0xFF, value, time);
 	}
 	void sccReset(unsigned id, EmuTime time);
 

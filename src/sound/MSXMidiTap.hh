@@ -19,7 +19,9 @@ namespace openmsx {
   * hardware does). The conversion is the same as the one of the MIDI export
   * (see MidiRecorder), but without the processing that needs to look ahead.
   *
-  * Currently only the PSG is supported.
+  * Supports PSG, SCC and MSX-Music. The melodic voices get the MIDI channels
+  * in the order the chips are first used (channel 10 is for the drums); the
+  * voices that do not fit in the 15 channels are not sent.
   */
 class MSXMidiTap final : public MSXDevice, private MidiRecorder::Listener
 {
@@ -34,33 +36,37 @@ public:
 	void serialize(Archive& ar, unsigned version);
 
 private:
-	struct PsgState {
-		PsgState(unsigned id_, unsigned index_)
-			: id(id_), index(index_), converter(true)
-			, tracks{midi::Track("A", midi::Track::Group::PSG_SCC, true),
-			         midi::Track("B", midi::Track::Group::PSG_SCC, true),
-			         midi::Track("C", midi::Track::Group::PSG_SCC, true)}
-			, drums("noise", midi::Track::Group::PSG_SCC, false) {
-			static constexpr std::array<uint8_t, 3> pan = {40, 64, 88};
-			for (unsigned v = 0; v < 3; ++v) {
-				tracks[v].setup(midi::PROGRAM_SQUARE_LEAD, pan[v]);
-			}
-		}
+	/** The converter and the MIDI tracks (used as event buffers) of one chip. */
+	struct ChipState {
+		ChipState(unsigned id_) : id(id_) {}
+		virtual ~ChipState() = default;
+		virtual void step(double g) = 0;
+		virtual void finish() = 0;
+
 		unsigned id;
-		unsigned index; // 0, 1: selects the MIDI channels
-		float clock = 1789772.0f;
-		midi::PsgConverter converter;
-		std::array<midi::Track, 3> tracks;
-		midi::Track drums;
+		std::vector<midi::Track> tracks;
+		std::vector<int> channels; // MIDI channel of every track, -1: none
+		midi::Track* drums = nullptr; // not in 'tracks' for the PSG and OPLL
 	};
+	struct PsgState;
+	struct SccState;
+	struct OpllState;
 
 	// MidiRecorder::Listener
 	void psgWrite(unsigned id, unsigned reg, uint8_t value,
 	              float clock, EmuTime time) override;
+	void sccWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time) override;
+	void opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time) override;
+
+	template<typename T> [[nodiscard]] T* find(unsigned id);
+	template<typename T> T* create(unsigned id);
+	/** The next free MIDI channel for a melodic voice (the drums have channel
+	  * 10), or -1 when all are used. */
+	[[nodiscard]] int allocateChannel();
 
 	void step(EmuTime time);
 	void flush(EmuTime time);
-	void sendEvents(midi::Track& track, uint8_t channel, EmuTime time);
+	void sendEvents(midi::Track& track, int channel, EmuTime time);
 	void allNotesOff(EmuTime time);
 
 private:
@@ -74,7 +80,8 @@ private:
 	} syncStep;
 
 	MidiOutConnector outConnector;
-	std::vector<std::unique_ptr<PsgState>> psgs;
+	std::vector<std::unique_ptr<ChipState>> chips;
+	int nextChannel = 0;
 	EmuTime start;
 	EmuTime nextStep;
 };

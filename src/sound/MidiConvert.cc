@@ -661,4 +661,125 @@ double opllPitchOffset(unsigned inst, const std::array<uint8_t, 64>& regs)
 	return 12.0 * std::log2(double(g) / 2.0);
 }
 
+SccConverter::SccConverter(bool detailed)
+{
+	dirty.fill(true);
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void SccConverter::write(unsigned reg, uint8_t value)
+{
+	regs[reg] = value;
+	if (reg < 0xA0) dirty[reg >> 5] = true;
+	if (reg >= 0xA0 && reg < 0xAA) {
+		// as in the SCC: the deformation register that is active at the time of
+		// the frequency write decides how many bits of the period are used
+		unsigned c = (reg - 0xA0) / 2;
+		unsigned per = regs[0xA0 + 2 * c] | ((regs[0xA1 + 2 * c] & 0x0F) << 8);
+		if (regs[0xB0] & 2) per &= 0xFF;
+		else if (regs[0xB0] & 1) per >>= 8;
+		effPeriod[c] = per;
+	}
+}
+
+void SccConverter::step(uint32_t tick, float clock, const std::array<Track*, 5>& tones)
+{
+	for (unsigned c = 0; c < 5; ++c) {
+		if (dirty[c]) {
+			wave[c] = classifyWave(&regs[c * 32]);
+			dirty[c] = false;
+		}
+		unsigned period = effPeriod[c];
+		unsigned vol = regs[0xAA + c] & 0x0F;
+		bool enabled = regs[0xAF] & (1u << c);
+		// quiet wave forms sound softer
+		unsigned level = (vol * wave[c].peak + 64) / 128;
+		if (vol > 0 && wave[c].peak > 0) level = std::max(level, 1u);
+		bool active = enabled && level > 0 && period >= 8;
+		double fine = 0.0;
+		if (active) {
+			fine = fineNoteForFrequency(double(clock) / (32.0 * (period + 1)));
+		}
+		tone[c].update(*tones[c], tick, active, fine, level, false, wave[c].program);
+	}
+}
+
+void SccConverter::finish(uint32_t tick, const std::array<Track*, 5>& tones)
+{
+	for (unsigned c = 0; c < 5; ++c) tone[c].finish(*tones[c], tick);
+}
+
+OpllConverter::OpllConverter(bool detailed)
+{
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void OpllConverter::write(unsigned r, uint8_t value)
+{
+	if (r >= 64) return;
+	if (r >= 0x20 && r <= 0x28) {
+		// count key-on edges, so a quick off/on between two grid points
+		// still retriggers the note
+		bool was = regs[r] & 0x10;
+		if (!was && (value & 0x10)) ++keyEdges[r - 0x20];
+	} else if (r == 0x0E) {
+		for (unsigned b = 0; b < 5; ++b) {
+			bool was = regs[r] & (1u << b);
+			if (!was && (value & (1u << b))) ++drumEdges[b];
+		}
+	}
+	regs[r] = value;
+}
+
+void OpllConverter::step(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack)
+{
+	bool rhythm = regs[0x0E] & 0x20;
+	for (unsigned c = 0; c < 9; ++c) {
+		bool keyOn = regs[0x20 + c] & 0x10;
+		unsigned fnum = regs[0x10 + c] | ((regs[0x20 + c] & 1) << 8);
+		unsigned block = (regs[0x20 + c] >> 1) & 7;
+		unsigned inst = regs[0x30 + c] >> 4;
+		unsigned att = regs[0x30 + c] & 15;
+		unsigned level = 15 - att;
+		bool melodic = !(rhythm && c >= 6);
+		bool active = melodic && keyOn && fnum > 0 && level > 0;
+		double fine = 0.0;
+		if (active) {
+			double freq = double(fnum) * double(1u << block)
+			            * (OPLL_CLOCK / 72.0) / 524288.0;
+			fine = fineNoteForFrequency(freq);
+			fine += opllPitchOffset(inst, regs);
+		}
+		bool force = keyEdges[c] != lastKeyEdges[c];
+		lastKeyEdges[c] = keyEdges[c];
+		tone[c].update(*tones[c], tick, active, fine, level,
+		               force && keyOn, OPLL_PROGRAMS[inst]);
+	}
+
+	// rhythm section
+	std::array<unsigned, 5> att = {
+		unsigned(regs[0x37] >> 4),   // hi-hat
+		unsigned(regs[0x38] & 15),   // top cymbal
+		unsigned(regs[0x38] >> 4),   // tom-tom
+		unsigned(regs[0x37] & 15),   // snare drum
+		unsigned(regs[0x36] & 15)};  // bass drum
+	for (unsigned b = 0; b < 5; ++b) {
+		bool on = rhythm && (regs[0x0E] & (1u << b));
+		drums[b].tick(drumTrack, tick);
+		if (!on) {
+			drums[b].release(drumTrack, tick);
+		} else if (drumEdges[b] != lastDrumEdges[b] || first) {
+			drums[b].hit(drumTrack, tick, OPLL_DRUMS[b], 15 - att[b]);
+		}
+		lastDrumEdges[b] = drumEdges[b];
+	}
+	first = false;
+}
+
+void OpllConverter::finish(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack)
+{
+	for (unsigned c = 0; c < 9; ++c) tone[c].finish(*tones[c], tick);
+	for (auto& d : drums) d.release(drumTrack, tick);
+}
+
 } // namespace openmsx::midi

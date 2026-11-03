@@ -305,6 +305,47 @@ struct WaveInfo {
   * @param regs the OPLL registers 0x00..0x3F (the user patch is read from them) */
 [[nodiscard]] double opllPitchOffset(unsigned inst, const std::array<uint8_t, 64>& regs);
 
+/** Like PsgConverter, for the five channels of an SCC (normalized register
+  * layout, see MidiRecorder). */
+class SccConverter
+{
+public:
+	explicit SccConverter(bool detailed);
+
+	void write(unsigned reg, uint8_t value);
+	void step(uint32_t tick, float clock, const std::array<Track*, 5>& tones);
+	void finish(uint32_t tick, const std::array<Track*, 5>& tones);
+
+private:
+	std::array<uint8_t, 256> regs = {};
+	std::array<bool, 5> dirty;
+	std::array<unsigned, 5> effPeriod = {}; // period after the deformation register
+	std::array<WaveInfo, 5> wave = {};
+	std::array<ToneVoice, 5> tone;
+};
+
+/** Like PsgConverter, for the nine channels and the rhythm section of an
+  * YM2413. */
+class OpllConverter
+{
+public:
+	explicit OpllConverter(bool detailed);
+
+	void write(unsigned reg, uint8_t value);
+	void step(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
+	void finish(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
+
+private:
+	std::array<uint8_t, 64> regs = {};
+	std::array<unsigned, 9> keyEdges = {};
+	std::array<unsigned, 9> lastKeyEdges = {};
+	std::array<unsigned, 5> drumEdges = {};
+	std::array<unsigned, 5> lastDrumEdges = {};
+	std::array<ToneVoice, 9> tone;
+	std::array<DrumVoice, 5> drums;
+	bool first = true;
+};
+
 } // namespace openmsx::midi
 
 #endif

@@ -469,3 +469,62 @@ TEST_CASE("MidiConvert: PsgConverter")
 	psg.step(0.1, 100, clock, tp, drums);
 	CHECK(t[0].events.back().data[0] == 0x80);
 }
+
+TEST_CASE("MidiConvert: SccConverter")
+{
+	std::array<Track, 5> t = {makeTrack(), makeTrack(), makeTrack(), makeTrack(), makeTrack()};
+	std::array<Track*, 5> tp = {&t[0], &t[1], &t[2], &t[3], &t[4]};
+	SccConverter scc(true);
+	// square wave on channel 1, period 253 (~440 Hz), full volume
+	for (unsigned i = 0; i < 32; ++i) scc.write(i, uint8_t(i < 16 ? 100 : -100));
+	scc.write(0xA0, 253);
+	scc.write(0xA1, 0);
+	scc.write(0xAA, 15);
+	scc.write(0xAF, 1);
+	for (unsigned n = 0; n < 10; ++n) scc.step(uint32_t(n * 5), 3579545.0f, tp);
+	auto on = notesOn(t[0]);
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].data[1] == 69);
+	CHECK(notesOn(t[1]).empty());
+
+	SECTION("the deformation register selects 8 bits of the period") {
+		// period 0x1FD with 8-bit mode gives 0xFD = 253 again
+		scc.write(0xB0, 2);
+		scc.write(0xA1, 1);
+		scc.write(0xA0, 0xFD);
+		for (unsigned n = 10; n < 20; ++n) scc.step(uint32_t(n * 5), 3579545.0f, tp);
+		CHECK(notesOn(t[0]).size() == 1);
+	}
+}
+
+TEST_CASE("MidiConvert: OpllConverter")
+{
+	std::array<Track, 9> t = {makeTrack(), makeTrack(), makeTrack(), makeTrack(), makeTrack(),
+	                          makeTrack(), makeTrack(), makeTrack(), makeTrack()};
+	std::array<Track*, 9> tp;
+	for (unsigned i = 0; i < 9; ++i) tp[i] = &t[i];
+	auto drums = makeTrack(false);
+	OpllConverter opll(true);
+
+	SECTION("a melodic note") {
+		opll.write(0x30, 0x10);  // violin, full volume
+		opll.write(0x10, 34);    // F-number 290
+		opll.write(0x20, 0x19);  // key on, block 4, F-number bit 8
+		for (unsigned n = 0; n < 10; ++n) opll.step(uint32_t(n * 5), tp, drums);
+		auto on = notesOn(t[0]);
+		REQUIRE(on.size() == 1);
+		CHECK(on[0].data[1] == 69);
+		// key off ends the note
+		opll.write(0x20, 0x09);
+		opll.step(60, tp, drums);
+		CHECK(t[0].events.back().data[0] == 0x80);
+	}
+	SECTION("rhythm: bass drum") {
+		opll.write(0x36, 0x00);  // bass drum volume
+		opll.write(0x0E, 0x30);  // rhythm mode + bass drum on
+		opll.step(0, tp, drums);
+		auto on = notesOn(drums);
+		REQUIRE(on.size() == 1);
+		CHECK(on[0].data[1] == OPLL_DRUMS[4]);
+	}
+}
