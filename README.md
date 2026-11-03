@@ -85,6 +85,9 @@ The chip state is sampled every 5 ms from the logged register writes.
   repeating envelopes are rendered with a constant volume. When the tone and
   noise are off, the envelope repetition rate is the pitch (buzzer bass) and
   it is written as a Synth Bass note.
+- **Repeated notes:** when the volume of a sounding voice jumps up by 4 or more
+  levels (out of 15) the game is attacking the same note again, so a new note
+  is written instead of a volume change.
 - **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches, at
   least 6 notes) are written as one sustained chord, because a chip voice that
   cycles through a chord every frame is heard as that chord. Slow patterns and
@@ -225,6 +228,9 @@ registradas.
   repetidas muy rápidas se dejan a volumen constante. Si el tono y el ruido
   están apagados, la frecuencia de repetición de la envolvente es la altura
   (bajo "buzzer") y se escribe como una nota de Synth Bass.
+- **Notas repetidas:** cuando el volumen de una voz que está sonando sube de
+  golpe 4 o más niveles (de 15), el juego está atacando de nuevo la misma nota,
+  y se escribe una nota nueva en lugar de un cambio de volumen.
 - **Los arpegios** (tandas de notas de como mucho 60 ms que ciclan entre 2 y 4
   alturas, al menos 6 notas) se escriben como un único acorde sostenido, porque
   una voz del chip que recorre un acorde en cada fotograma se oye como ese
