@@ -43,6 +43,8 @@ static constexpr double JUMP_SEMITONES = 2.0;
 static constexpr unsigned MIN_PERIOD = 10;
 // General MIDI "Square Lead".
 static constexpr uint8_t PROGRAM_SQUARE_LEAD = 80;
+// General MIDI "Synth Bass 1": used for buzzer bass (pitch given by the envelope).
+static constexpr uint8_t PROGRAM_SYNTH_BASS = 38;
 // Drum hits last at most this long.
 static constexpr int DRUM_MAX_STEPS = 12; // 60 ms
 // Envelope cycles shorter than this are "buzzer" sounds: they are rendered
@@ -689,12 +691,19 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 					bool noiseOn = !(mixer & (8u << v));
 					unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
 
-					bool active = toneOn && level > 0 && period >= MIN_PERIOD;
+					// Buzzer bass: fast repeating envelope without tone and noise;
+					// the pitch is the envelope repetition rate.
+					bool envBass = buzz && (regs[8 + v] & 0x10) && !toneOn && !noiseOn;
+					bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
 					double fine = 0.0;
-					if (active) {
+					if (envBass) {
+						double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
+						fine = fineNoteForFrequency(double(clock) / (16.0 * envPeriod * envSteps));
+					} else if (active) {
 						fine = fineNoteForFrequency(double(clock) / (16.0 * period));
 					}
-					tone[v].update(*tt[v], tick, active, fine, level, false, -1);
+					tone[v].update(*tt[v], tick, active, fine, level, false,
+					               envBass ? PROGRAM_SYNTH_BASS : PROGRAM_SQUARE_LEAD);
 
 					// ---- noise (drums) ----
 					auto& nv = noise[v];

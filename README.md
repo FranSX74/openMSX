@@ -81,7 +81,9 @@ The chip state is sampled every 5 ms from the logged register writes.
   become a new note; bigger jumps (arpeggios, sound effects) are immediate.
 - **Volume** becomes CC#11 (expression) and note-on velocity.
 - **PSG hardware envelope** is evaluated exactly (all 16 shapes). Very fast
-  repeating envelopes (buzzer bass) are rendered with a constant volume.
+  repeating envelopes are rendered with a constant volume. When the tone and
+  noise are off, the envelope repetition rate is the pitch (buzzer bass) and
+  it is written as a Synth Bass note.
 - **PSG noise** becomes GM drums in 6 bands (hi-hats, snare, toms, bass drum).
 - **MSX-Music**: the 15 built-in instruments are mapped to General MIDI
   programs, key-on edges are tracked so a quick off/on of the same note is a new
@@ -214,7 +216,9 @@ registradas.
   como nota nueva; los saltos mayores (arpegios, efectos) son inmediatos.
 - **El volumen** pasa a CC#11 (expresión) y a la velocity de cada nota.
 - **La envolvente del PSG** se evalúa exacta (las 16 formas). Las envolventes
-  repetidas muy rápidas (bajos "buzzer") se dejan a volumen constante.
+  repetidas muy rápidas se dejan a volumen constante. Si el tono y el ruido
+  están apagados, la frecuencia de repetición de la envolvente es la altura
+  (bajo "buzzer") y se escribe como una nota de Synth Bass.
 - **El ruido del PSG** pasa a batería GM en 6 bandas (hi-hats, caja, toms, bombo).
 - **MSX-Music**: los 15 instrumentos internos se asignan a programas General
   MIDI, se vigilan los flancos de key-on para que un apagado/encendido rápido
