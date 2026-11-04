@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -84,7 +85,18 @@ inline constexpr size_t ARP_MIN_NOTES = 4;           // at least this many notes
 inline constexpr size_t ARP_MAX_PITCHES = 4;         // at most this many different pitches
 // Number of MIDI channels available for melodic voices (16 minus drums).
 inline constexpr size_t MELODIC_CHANNELS = 15;
+/** Default channel volume (CC#7) for the PSG, SCC and MSX-Music. The SCC is
+  * mixed louder than the PSG in the MIDI output because its waves are not
+  * as loud as the PSG square waves and the drums of a General MIDI sound
+  * font. */
+inline constexpr std::array<uint8_t, 3> DEFAULT_CHANNEL_VOLUME = {85, 120, 100};
 inline constexpr uint8_t DRUM_CHANNEL = 9;
+// Real-time 'clean' mode: every event is sent this long after it happened, so
+// that arpeggios and glitches can be recognized first.
+inline constexpr uint32_t LIVE_LATENCY_TICKS = 300;
+// A run of short notes that goes on longer than this is cut into pieces (the
+// pieces are joined again in the output), to bound the delay of its chord.
+inline constexpr uint32_t LIVE_MAX_HOLD_TICKS = 200;
 
 // YM2413 (MSX-Music)
 inline constexpr double OPLL_CLOCK = 3579545.0;
@@ -152,9 +164,9 @@ struct Track {
 	void add2(uint32_t tick, uint8_t status, uint8_t d1) {
 		events.push_back({tick, {status, d1, 0}, 2});
 	}
-	void setup(uint8_t program, uint8_t pan) {
+	void setup(uint8_t program, uint8_t pan, uint8_t volume = 100) {
 		add2(0, 0xC0, program);
-		add(0, 0xB0, 7, 100);
+		add(0, 0xB0, 7, volume);
 		add(0, 0xB0, 10, pan);
 		add(0, 0xB0, 11, 0);
 		// RPN 0: pitch bend range
@@ -227,12 +239,50 @@ struct DrumVoice {
 	void tick(Track& t, uint32_t tick);
 };
 
+/** Converts the register state of one PSG, sampled on the grid, into notes on
+  * three tone tracks and one noise (drum) track. Used for the export (the
+  * whole recording is replayed) and for the real-time output (one step per
+  * grid period). */
+class PsgConverter
+{
+public:
+	explicit PsgConverter(bool detailed);
+
+	/** Register write at the given time (seconds). */
+	void write(unsigned reg, uint8_t value, double time);
+	/** Evaluate the state at time 'g' (seconds), appending events at 'tick'. */
+	void step(double g, uint32_t tick, float clock,
+	          const std::array<Track*, 3>& tones, Track& drums);
+	/** Release all sounding notes. */
+	void finish(uint32_t tick, const std::array<Track*, 3>& tones, Track& drums);
+
+	/** The register state, e.g. for a savestate: restore it by writing the
+	  * registers again (the envelope start time with the given time). */
+	[[nodiscard]] const std::array<uint8_t, 16>& registers() const { return regs; }
+	[[nodiscard]] double envelopeStart() const { return envStart; }
+
+private:
+	std::array<uint8_t, 16> regs = {};
+	double envStart = 0.0;
+	std::array<ToneVoice, 3> tone;
+	std::array<DrumVoice, 3> noise;
+	std::array<bool, 3> noiseWasOn = {};
+	std::array<int, 3> pendDrum = {-1, -1, -1};
+	std::array<int, 3> pendCount = {};
+};
+
 // ---------------------------------------------------------------------------
 // Post-processing of a track
 // ---------------------------------------------------------------------------
 
+/** The chord that the arpeggio at the end of the previous piece of a track was
+  * written as (pieces of a long arpeggio, see LiveCleaner). */
+struct ArpContinuation {
+	std::vector<uint8_t> pitches;
+	uint32_t tick; // end of the chord
+};
 /** Replace arpeggios (see ARP_* constants) in a melodic track by chords. */
-void collapseArpeggios(Track& t);
+void collapseArpeggios(Track& t, const ArpContinuation* cont = nullptr);
 
 /** Move the fast descending runs of short notes of a voice to the drum track
   * as drum hits (see SWEEP_* constants). Returns the number of hits. */
@@ -240,6 +290,40 @@ size_t sweepsToDrums(Track& voice, Track& drums);
 
 /** Remove the notes that are shorter than 'minTicks'. */
 void dropShortNotes(Track& t, uint32_t minTicks);
+
+/** Post-processing of the events of one voice that arrive in real time:
+  * drops glitch notes and (optionally) turns arpeggios into chords, like the
+  * export does, by holding the events back until it is known that no later
+  * event changes them. The events must be pushed in tick order. */
+class LiveCleaner
+{
+public:
+	/** @param melodic    false: the events are passed on unchanged
+	  * @param arpeggio   write arpeggios as chords */
+	LiveCleaner(bool melodic_, bool arpeggio_)
+		: melodic(melodic_), arpeggio(arpeggio_) {}
+
+	void setArpeggio(bool value) { arpeggio = value; }
+	void push(const Event& e) { buf.push_back(e); }
+	/** Move the events that are final at time 'now' (ticks) to 'out'. */
+	void process(uint32_t now, std::deque<Event>& out);
+	/** Move everything to 'out' (the voice is finished or the mode changes). */
+	void drain(std::deque<Event>& out);
+
+private:
+	/** Split position (event index) before which all events are final, or 0.
+	  * @param requireSafe  the cut must not split an arpeggio */
+	[[nodiscard]] size_t findSplit(uint32_t now, bool requireSafe) const;
+	void finalize(size_t split, bool chopped, std::deque<Event>& out);
+
+	std::vector<Event> buf;
+	// Notes that ended exactly at the end of a piece cut in the middle of an
+	// arpeggio: a note that starts again right after is a continuation.
+	std::vector<uint8_t> chopPitches;
+	uint32_t chopTick = 0;
+	bool melodic;
+	bool arpeggio;
+};
 
 // ---------------------------------------------------------------------------
 // Standard MIDI File
@@ -277,6 +361,51 @@ struct WaveInfo {
   * @param inst the instrument number (0 = user patch)
   * @param regs the OPLL registers 0x00..0x3F (the user patch is read from them) */
 [[nodiscard]] double opllPitchOffset(unsigned inst, const std::array<uint8_t, 64>& regs);
+
+/** Like PsgConverter, for the five channels of an SCC (normalized register
+  * layout, see MidiRecorder). */
+class SccConverter
+{
+public:
+	explicit SccConverter(bool detailed);
+
+	void write(unsigned reg, uint8_t value);
+	void step(uint32_t tick, float clock, const std::array<Track*, 5>& tones);
+	void finish(uint32_t tick, const std::array<Track*, 5>& tones);
+
+	[[nodiscard]] const std::array<uint8_t, 256>& registers() const { return regs; }
+
+private:
+	std::array<uint8_t, 256> regs = {};
+	std::array<bool, 5> dirty;
+	std::array<unsigned, 5> effPeriod = {}; // period after the deformation register
+	std::array<WaveInfo, 5> wave = {};
+	std::array<ToneVoice, 5> tone;
+};
+
+/** Like PsgConverter, for the nine channels and the rhythm section of an
+  * YM2413. */
+class OpllConverter
+{
+public:
+	explicit OpllConverter(bool detailed);
+
+	void write(unsigned reg, uint8_t value);
+	void step(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
+	void finish(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
+
+	[[nodiscard]] const std::array<uint8_t, 64>& registers() const { return regs; }
+
+private:
+	std::array<uint8_t, 64> regs = {};
+	std::array<unsigned, 9> keyEdges = {};
+	std::array<unsigned, 9> lastKeyEdges = {};
+	std::array<unsigned, 5> drumEdges = {};
+	std::array<unsigned, 5> lastDrumEdges = {};
+	std::array<ToneVoice, 9> tone;
+	std::array<DrumVoice, 5> drums;
+	bool first = true;
+};
 
 } // namespace openmsx::midi
 

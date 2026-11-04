@@ -2,6 +2,7 @@
 #define MIDIRECORDER_HH
 
 #include "EmuTime.hh"
+#include "MidiConvert.hh"
 
 #include <array>
 #include <cstddef>
@@ -37,6 +38,24 @@ public:
 	static constexpr std::string_view MIDI_EXTENSION = ".mid";
 
 	enum class Chip : uint8_t { PSG, SCC, OPLL };
+
+	/** Receives the chip register writes as they happen, e.g. for a device
+	  * that produces MIDI in real time. */
+	class Listener {
+	public:
+		virtual void psgWrite(unsigned id, unsigned reg, uint8_t value,
+		                      float clock, EmuTime time) = 0;
+		/** Same layout as sccWriteReg(). */
+		virtual void sccWrite(unsigned id, unsigned reg, uint8_t value,
+		                      EmuTime time) = 0;
+		/** YM2413 register 0x00..0x3F. */
+		virtual void opllWrite(unsigned id, unsigned reg, uint8_t value,
+		                       EmuTime time) = 0;
+		/** The channel volumes (setVolume) changed. */
+		virtual void volumesChanged(EmuTime time) = 0;
+	protected:
+		~Listener() = default;
+	};
 	/** FULL: as close to the chips as possible (repeated notes, flutter,
 	  * vibrato as pitch bend). SIMPLE: fewer, longer notes, easier to edit. */
 	enum class Detail : uint8_t { FULL, SIMPLE };
@@ -69,6 +88,7 @@ public:
 		s.regs[reg & 15] = value;
 		s.clock = clock;
 		if (recording) log(id, reg & 15, value, clock, time);
+		for (auto* l : listeners) l->psgWrite(id, reg & 15, value, clock, time);
 	}
 
 	/** Write to the YM2413 address (port=false) or data (port=true) port. */
@@ -86,6 +106,7 @@ public:
 		reg &= 0x3F;
 		s.regs[reg] = value;
 		if (recording) log(id, reg, value, s.clock, time);
+		for (auto* l : listeners) l->opllWrite(id, reg, value, time);
 	}
 	void opllReset(unsigned id, EmuTime time);
 
@@ -96,8 +117,19 @@ public:
 		auto& s = chips[id];
 		s.regs[reg & 0xFF] = value;
 		if (recording) log(id, reg & 0xFF, value, s.clock, time);
+		for (auto* l : listeners) l->sccWrite(id, reg & 0xFF, value, time);
 	}
 	void sccReset(unsigned id, EmuTime time);
+
+	/** Channel volume (MIDI CC#7, 0..127) of the voices of a chip. */
+	void setVolume(Chip chip, uint8_t value, EmuTime time) {
+		volumes[unsigned(chip)] = value;
+		for (auto* l : listeners) l->volumesChanged(time);
+	}
+	[[nodiscard]] uint8_t getVolume(Chip chip) const { return volumes[unsigned(chip)]; }
+
+	void addListener(Listener* l) { listeners.push_back(l); }
+	void removeListener(Listener* l) { std::erase(listeners, l); }
 
 	/** Write arpeggios (fast cycles through a few pitches) as chords. */
 	void setArpeggioChords(bool value) { arpeggioChords = value; }
@@ -107,6 +139,13 @@ public:
 	  * notes) and write them as drum hits instead of notes. */
 	void setDetectPercussion(bool value) { detectPercussion = value; }
 	[[nodiscard]] bool getDetectPercussion() const { return detectPercussion; }
+
+	/** Real-time output (MIDI Tap). RAW: every note at once, as the chips play
+	  * it. CLEAN: sent with a delay of LIVE_LATENCY_TICKS, with glitches
+	  * removed and arpeggios as chords. */
+	enum class LiveMode : uint8_t { RAW, CLEAN };
+	void setLiveMode(LiveMode value) { liveMode = value; }
+	[[nodiscard]] LiveMode getLiveMode() const { return liveMode; }
 
 	void setDetail(Detail value) { detail = value; }
 	[[nodiscard]] Detail getDetail() const { return detail; }
@@ -141,6 +180,8 @@ private:
 private:
 	MSXMotherBoard& motherBoard;
 	std::vector<ChipState> chips;
+	std::vector<Listener*> listeners;
+	std::array<uint8_t, 3> volumes = midi::DEFAULT_CHANNEL_VOLUME;
 	std::vector<LogEntry> entries;
 	std::string filename;
 	EmuTime startTime = EmuTime::zero();
@@ -148,6 +189,7 @@ private:
 	bool arpeggioChords = true;
 	bool detectPercussion = false;
 	Detail detail = Detail::FULL;
+	LiveMode liveMode = LiveMode::RAW;
 	std::unique_ptr<MidiRecordCmd> command;
 };
 

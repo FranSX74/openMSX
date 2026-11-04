@@ -407,6 +407,7 @@ sources = files(
     'sound/Mixer.cc',
     'sound/MidiConvert.cc',
     'sound/MidiRecorder.cc',
+    'sound/MSXMidiTap.cc',
     'sound/NullSoundDriver.cc',
     'sound/ResampleBlip.cc',
     'sound/ResampleHQ.cc',

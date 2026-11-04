@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -439,5 +440,197 @@ TEST_CASE("MidiConvert: sweepsToDrums")
 			addNote(voice, i * 200, i * 200 + 200, uint8_t(72 - 3 * i));
 		}
 		CHECK(sweepsToDrums(voice, drums) == 0);
+	}
+}
+
+TEST_CASE("MidiConvert: PsgConverter")
+{
+	const float clock = 1789772.0f;
+	std::array<Track, 3> t = {makeTrack(), makeTrack(), makeTrack()};
+	auto drums = makeTrack(false);
+	std::array<Track*, 3> tp = {&t[0], &t[1], &t[2]};
+	PsgConverter psg(true);
+
+	// channel A: period 254 (~440 Hz), volume 12, tone on, noise off
+	psg.write(0, 254, 0.0);
+	psg.write(1, 0, 0.0);
+	psg.write(8, 12, 0.0);
+	psg.write(7, 0x3E, 0.0);
+	for (unsigned n = 0; n < 20; ++n) {
+		psg.step(n * GRID_SECONDS, uint32_t(n * 5), clock, tp, drums);
+	}
+	auto on = notesOn(t[0]);
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].data[1] == 69);
+	CHECK(notesOn(t[1]).empty());
+	CHECK(notesOn(drums).empty());
+
+	// mute it
+	psg.write(8, 0, 0.1);
+	psg.step(0.1, 100, clock, tp, drums);
+	CHECK(t[0].events.back().data[0] == 0x80);
+}
+
+TEST_CASE("MidiConvert: SccConverter")
+{
+	std::array<Track, 5> t = {makeTrack(), makeTrack(), makeTrack(), makeTrack(), makeTrack()};
+	std::array<Track*, 5> tp = {&t[0], &t[1], &t[2], &t[3], &t[4]};
+	SccConverter scc(true);
+	// square wave on channel 1, period 253 (~440 Hz), full volume
+	for (unsigned i = 0; i < 32; ++i) scc.write(i, uint8_t(i < 16 ? 100 : -100));
+	scc.write(0xA0, 253);
+	scc.write(0xA1, 0);
+	scc.write(0xAA, 15);
+	scc.write(0xAF, 1);
+	for (unsigned n = 0; n < 10; ++n) scc.step(uint32_t(n * 5), 3579545.0f, tp);
+	auto on = notesOn(t[0]);
+	REQUIRE(on.size() == 1);
+	CHECK(on[0].data[1] == 69);
+	CHECK(notesOn(t[1]).empty());
+
+	SECTION("the deformation register selects 8 bits of the period") {
+		// period 0x1FD with 8-bit mode gives 0xFD = 253 again
+		scc.write(0xB0, 2);
+		scc.write(0xA1, 1);
+		scc.write(0xA0, 0xFD);
+		for (unsigned n = 10; n < 20; ++n) scc.step(uint32_t(n * 5), 3579545.0f, tp);
+		CHECK(notesOn(t[0]).size() == 1);
+	}
+}
+
+TEST_CASE("MidiConvert: OpllConverter")
+{
+	std::array<Track, 9> t = {makeTrack(), makeTrack(), makeTrack(), makeTrack(), makeTrack(),
+	                          makeTrack(), makeTrack(), makeTrack(), makeTrack()};
+	std::array<Track*, 9> tp;
+	for (unsigned i = 0; i < 9; ++i) tp[i] = &t[i];
+	auto drums = makeTrack(false);
+	OpllConverter opll(true);
+
+	SECTION("a melodic note") {
+		opll.write(0x30, 0x10);  // violin, full volume
+		opll.write(0x10, 34);    // F-number 290
+		opll.write(0x20, 0x19);  // key on, block 4, F-number bit 8
+		for (unsigned n = 0; n < 10; ++n) opll.step(uint32_t(n * 5), tp, drums);
+		auto on = notesOn(t[0]);
+		REQUIRE(on.size() == 1);
+		CHECK(on[0].data[1] == 69);
+		// key off ends the note
+		opll.write(0x20, 0x09);
+		opll.step(60, tp, drums);
+		CHECK(t[0].events.back().data[0] == 0x80);
+	}
+	SECTION("rhythm: bass drum") {
+		opll.write(0x36, 0x00);  // bass drum volume
+		opll.write(0x0E, 0x30);  // rhythm mode + bass drum on
+		opll.step(0, tp, drums);
+		auto on = notesOn(drums);
+		REQUIRE(on.size() == 1);
+		CHECK(on[0].data[1] == OPLL_DRUMS[4]);
+	}
+}
+
+TEST_CASE("MidiConvert: LiveCleaner")
+{
+	auto feed = [](LiveCleaner& c, const Track& t) {
+		for (const auto& e : t.events) c.push(e);
+	};
+
+	SECTION("a long note is final as soon as it is closed and the gap is passed")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 0, 200, 60);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(210, out);
+		CHECK(out.size() == 2);
+	}
+
+	SECTION("a glitch note is dropped")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 100, 105, 60);
+		addNote(t, 300, 500, 62);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(600, out);
+		REQUIRE(out.size() == 2);
+		CHECK(out[0].data[1] == 62);
+	}
+
+	SECTION("an open note is not sent before it can no longer be an arpeggio note")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		t.add(100, 0x90, 60, 100);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(130, out);
+		CHECK(out.empty());
+		c.process(200, out);
+		CHECK(out.size() == 1);
+	}
+
+	SECTION("an arpeggio becomes a chord, also when it is cut in pieces")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		// 50 Hz cycle through three pitches, for 1.2 s
+		for (uint32_t k = 0; k < 60; ++k) {
+			static constexpr std::array<uint8_t, 3> p = {60, 64, 67};
+			addNote(t, k * 20, k * 20 + 18, p[k % 3]);
+		}
+		std::deque<Event> out;
+		size_t next = 0;
+		for (uint32_t now = 0; now < 2000; now += 5) {
+			while (next < t.events.size() && t.events[next].tick <= now) {
+				c.push(t.events[next++]);
+			}
+			c.process(now, out);
+		}
+		size_t on = 0, off = 0;
+		for (const auto& e : out) {
+			if (e.data[0] == 0x90 && e.data[2] != 0) ++on;
+			if (e.data[0] == 0x80) ++off;
+		}
+		CHECK(on == off);
+		CHECK(on <= 6); // a few chord notes instead of 60 notes
+		CHECK(on >= 3);
+	}
+
+	SECTION("legato melody notes are not held back")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 0, 100, 60);
+		addNote(t, 100, 200, 62);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(250, out);
+		CHECK(out.size() == 4);
+	}
+
+	SECTION("a non melodic track is passed on unchanged")
+	{
+		LiveCleaner c(false, true);
+		auto t = makeTrack(false);
+		addNote(t, 100, 105, 38);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(110, out);
+		CHECK(out.size() == 2);
+	}
+
+	SECTION("drain sends everything")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		t.add(100, 0x90, 60, 100);
+		feed(c, t);
+		std::deque<Event> out;
+		c.drain(out);
+		CHECK(out.size() == 1);
 	}
 }
