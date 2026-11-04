@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,12 @@ inline constexpr size_t MELODIC_CHANNELS = 15;
   * font. */
 inline constexpr std::array<uint8_t, 3> DEFAULT_CHANNEL_VOLUME = {85, 120, 100};
 inline constexpr uint8_t DRUM_CHANNEL = 9;
+// Real-time 'clean' mode: every event is sent this long after it happened, so
+// that arpeggios and glitches can be recognized first.
+inline constexpr uint32_t LIVE_LATENCY_TICKS = 300;
+// A run of short notes that goes on longer than this is cut into pieces (the
+// pieces are joined again in the output), to bound the delay of its chord.
+inline constexpr uint32_t LIVE_MAX_HOLD_TICKS = 200;
 
 // YM2413 (MSX-Music)
 inline constexpr double OPLL_CLOCK = 3579545.0;
@@ -263,8 +270,14 @@ private:
 // Post-processing of a track
 // ---------------------------------------------------------------------------
 
+/** The chord that the arpeggio at the end of the previous piece of a track was
+  * written as (pieces of a long arpeggio, see LiveCleaner). */
+struct ArpContinuation {
+	std::vector<uint8_t> pitches;
+	uint32_t tick; // end of the chord
+};
 /** Replace arpeggios (see ARP_* constants) in a melodic track by chords. */
-void collapseArpeggios(Track& t);
+void collapseArpeggios(Track& t, const ArpContinuation* cont = nullptr);
 
 /** Move the fast descending runs of short notes of a voice to the drum track
   * as drum hits (see SWEEP_* constants). Returns the number of hits. */
@@ -272,6 +285,40 @@ size_t sweepsToDrums(Track& voice, Track& drums);
 
 /** Remove the notes that are shorter than 'minTicks'. */
 void dropShortNotes(Track& t, uint32_t minTicks);
+
+/** Post-processing of the events of one voice that arrive in real time:
+  * drops glitch notes and (optionally) turns arpeggios into chords, like the
+  * export does, by holding the events back until it is known that no later
+  * event changes them. The events must be pushed in tick order. */
+class LiveCleaner
+{
+public:
+	/** @param melodic    false: the events are passed on unchanged
+	  * @param arpeggio   write arpeggios as chords */
+	LiveCleaner(bool melodic_, bool arpeggio_)
+		: melodic(melodic_), arpeggio(arpeggio_) {}
+
+	void setArpeggio(bool value) { arpeggio = value; }
+	void push(const Event& e) { buf.push_back(e); }
+	/** Move the events that are final at time 'now' (ticks) to 'out'. */
+	void process(uint32_t now, std::deque<Event>& out);
+	/** Move everything to 'out' (the voice is finished or the mode changes). */
+	void drain(std::deque<Event>& out);
+
+private:
+	/** Split position (event index) before which all events are final, or 0.
+	  * @param requireSafe  the cut must not split an arpeggio */
+	[[nodiscard]] size_t findSplit(uint32_t now, bool requireSafe) const;
+	void finalize(size_t split, bool chopped, std::deque<Event>& out);
+
+	std::vector<Event> buf;
+	// Notes that ended exactly at the end of a piece cut in the middle of an
+	// arpeggio: a note that starts again right after is a continuation.
+	std::vector<uint8_t> chopPitches;
+	uint32_t chopTick = 0;
+	bool melodic;
+	bool arpeggio;
+};
 
 // ---------------------------------------------------------------------------
 // Standard MIDI File

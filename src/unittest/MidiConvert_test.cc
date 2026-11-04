@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -526,5 +527,110 @@ TEST_CASE("MidiConvert: OpllConverter")
 		auto on = notesOn(drums);
 		REQUIRE(on.size() == 1);
 		CHECK(on[0].data[1] == OPLL_DRUMS[4]);
+	}
+}
+
+TEST_CASE("MidiConvert: LiveCleaner")
+{
+	auto feed = [](LiveCleaner& c, const Track& t) {
+		for (const auto& e : t.events) c.push(e);
+	};
+
+	SECTION("a long note is final as soon as it is closed and the gap is passed")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 0, 200, 60);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(210, out);
+		CHECK(out.size() == 2);
+	}
+
+	SECTION("a glitch note is dropped")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 100, 105, 60);
+		addNote(t, 300, 500, 62);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(600, out);
+		REQUIRE(out.size() == 2);
+		CHECK(out[0].data[1] == 62);
+	}
+
+	SECTION("an open note is not sent before it can no longer be an arpeggio note")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		t.add(100, 0x90, 60, 100);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(130, out);
+		CHECK(out.empty());
+		c.process(200, out);
+		CHECK(out.size() == 1);
+	}
+
+	SECTION("an arpeggio becomes a chord, also when it is cut in pieces")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		// 50 Hz cycle through three pitches, for 1.2 s
+		for (uint32_t k = 0; k < 60; ++k) {
+			static constexpr std::array<uint8_t, 3> p = {60, 64, 67};
+			addNote(t, k * 20, k * 20 + 18, p[k % 3]);
+		}
+		std::deque<Event> out;
+		size_t next = 0;
+		for (uint32_t now = 0; now < 2000; now += 5) {
+			while (next < t.events.size() && t.events[next].tick <= now) {
+				c.push(t.events[next++]);
+			}
+			c.process(now, out);
+		}
+		size_t on = 0, off = 0;
+		for (const auto& e : out) {
+			if (e.data[0] == 0x90 && e.data[2] != 0) ++on;
+			if (e.data[0] == 0x80) ++off;
+		}
+		CHECK(on == off);
+		CHECK(on <= 6); // a few chord notes instead of 60 notes
+		CHECK(on >= 3);
+	}
+
+	SECTION("legato melody notes are not held back")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		addNote(t, 0, 100, 60);
+		addNote(t, 100, 200, 62);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(250, out);
+		CHECK(out.size() == 4);
+	}
+
+	SECTION("a non melodic track is passed on unchanged")
+	{
+		LiveCleaner c(false, true);
+		auto t = makeTrack(false);
+		addNote(t, 100, 105, 38);
+		feed(c, t);
+		std::deque<Event> out;
+		c.process(110, out);
+		CHECK(out.size() == 2);
+	}
+
+	SECTION("drain sends everything")
+	{
+		LiveCleaner c(true, true);
+		auto t = makeTrack();
+		t.add(100, 0x90, 60, 100);
+		feed(c, t);
+		std::deque<Event> out;
+		c.drain(out);
+		CHECK(out.size() == 1);
 	}
 }

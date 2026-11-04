@@ -26,11 +26,11 @@ struct MSXMidiTap::PsgState final : ChipState {
 		}
 		drums = &noise;
 	}
-	void step(double g) override {
-		converter.step(g, 0, clock, {&tracks[0], &tracks[1], &tracks[2]}, *drums);
+	void step(double g, uint32_t tick) override {
+		converter.step(g, tick, clock, {&tracks[0], &tracks[1], &tracks[2]}, *drums);
 	}
-	void finish() override {
-		converter.finish(0, {&tracks[0], &tracks[1], &tracks[2]}, *drums);
+	void finish(uint32_t tick) override {
+		converter.finish(tick, {&tracks[0], &tracks[1], &tracks[2]}, *drums);
 	}
 	PsgConverter converter;
 	float clock = 1789772.0f;
@@ -49,8 +49,8 @@ struct MSXMidiTap::SccState final : ChipState {
 	std::array<Track*, 5> ptrs() {
 		return {&tracks[0], &tracks[1], &tracks[2], &tracks[3], &tracks[4]};
 	}
-	void step(double /*g*/) override { converter.step(0, float(SCC_CLOCK), ptrs()); }
-	void finish() override { converter.finish(0, ptrs()); }
+	void step(double /*g*/, uint32_t tick) override { converter.step(tick, float(SCC_CLOCK), ptrs()); }
+	void finish(uint32_t tick) override { converter.finish(tick, ptrs()); }
 	SccConverter converter;
 };
 
@@ -69,8 +69,8 @@ struct MSXMidiTap::OpllState final : ChipState {
 		for (unsigned c = 0; c < 9; ++c) r[c] = &tracks[c];
 		return r;
 	}
-	void step(double /*g*/) override { converter.step(0, ptrs(), *drums); }
-	void finish() override { converter.finish(0, ptrs(), *drums); }
+	void step(double /*g*/, uint32_t tick) override { converter.step(tick, ptrs(), *drums); }
+	void finish(uint32_t tick) override { converter.finish(tick, ptrs(), *drums); }
 	OpllConverter converter;
 	Track noise;
 };
@@ -91,6 +91,8 @@ MSXMidiTap::MSXMidiTap(const DeviceConfig& config)
 MSXMidiTap::~MSXMidiTap()
 {
 	getMotherBoard().getMidiRecorder().removeListener(this);
+	// do not leave the synthesizer with sounding notes
+	allNotesOff(getCurrentTime());
 }
 
 int MSXMidiTap::allocateChannel()
@@ -148,13 +150,19 @@ void MSXMidiTap::opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime /*t
 	opll->converter.write(reg, value);
 }
 
+uint32_t MSXMidiTap::tickOf(EmuTime time) const
+{
+	return toTick((time - start).toDouble());
+}
+
 void MSXMidiTap::volumesChanged(EmuTime time)
 {
 	const auto& recorder = getMotherBoard().getMidiRecorder();
+	uint32_t tick = tickOf(time);
 	for (auto& chip : chips) {
 		auto volume = recorder.getVolume(chip->kind);
 		for (size_t i = 0; i < chip->tracks.size(); ++i) {
-			chip->tracks[i].add(0, 0xB0, 7, volume);
+			chip->tracks[i].add(tick, 0xB0, 7, volume);
 		}
 	}
 	flush(time);
@@ -163,27 +171,68 @@ void MSXMidiTap::volumesChanged(EmuTime time)
 void MSXMidiTap::step(EmuTime time)
 {
 	double g = (time - start).toDouble();
-	for (auto& chip : chips) chip->step(g);
+	uint32_t tick = tickOf(time);
+	for (auto& chip : chips) chip->step(g, tick);
 	flush(time);
 	nextStep = nextStep + EmuDuration::sec(GRID_SECONDS);
 	syncStep.setSyncPoint(nextStep);
 }
 
+void MSXMidiTap::sendEvent(const Event& e, int channel, EmuTime time)
+{
+	if (channel < 0) return;
+	outConnector.recvByte(uint8_t((e.data[0] & 0xF0) | channel), time);
+	for (unsigned i = 1; i < e.size; ++i) {
+		outConnector.recvByte(e.data[i], time);
+	}
+}
+
 void MSXMidiTap::sendEvents(Track& track, int channel, EmuTime time)
 {
-	if (channel >= 0) {
-		for (const auto& e : track.events) {
-			outConnector.recvByte(uint8_t((e.data[0] & 0xF0) | channel), time);
-			for (unsigned i = 1; i < e.size; ++i) {
-				outConnector.recvByte(e.data[i], time);
+	for (const auto& e : track.events) sendEvent(e, channel, time);
+	track.events.clear();
+}
+
+void MSXMidiTap::flushClean(EmuTime time, uint32_t now, bool all)
+{
+	for (auto& chip : chips) {
+		size_t n = chip->tracks.size() + (chip->drums ? 1 : 0);
+		while (chip->lanes.size() < n) {
+			// the drum lane is the last one
+			chip->lanes.emplace_back(chip->lanes.size() < chip->tracks.size());
+		}
+		for (size_t i = 0; i < n; ++i) {
+			bool isDrums = i >= chip->tracks.size();
+			auto& track = isDrums ? *chip->drums : chip->tracks[i];
+			auto& lane = chip->lanes[i];
+			lane.cleaner.setArpeggio(getMotherBoard().getMidiRecorder().getArpeggioChords());
+			for (const auto& e : track.events) lane.cleaner.push(e);
+			track.events.clear();
+			if (all) lane.cleaner.drain(lane.ready);
+			else lane.cleaner.process(now, lane.ready);
+			int channel = isDrums ? int(DRUM_CHANNEL) : chip->channels[i];
+			while (!lane.ready.empty() &&
+			       (all || lane.ready.front().tick + LIVE_LATENCY_TICKS <= now)) {
+				sendEvent(lane.ready.front(), channel, time);
+				lane.ready.pop_front();
 			}
 		}
 	}
-	track.events.clear();
 }
 
 void MSXMidiTap::flush(EmuTime time)
 {
+	using LiveMode = MidiRecorder::LiveMode;
+	if (getMotherBoard().getMidiRecorder().getLiveMode() == LiveMode::CLEAN) {
+		flushClean(time, tickOf(time), false);
+		cleanActive = true;
+		return;
+	}
+	if (cleanActive) {
+		// back to raw: whatever waits goes out now
+		flushClean(time, tickOf(time), true);
+		cleanActive = false;
+	}
 	for (auto& chip : chips) {
 		for (size_t i = 0; i < chip->tracks.size(); ++i) {
 			sendEvents(chip->tracks[i], chip->channels[i], time);
@@ -194,8 +243,19 @@ void MSXMidiTap::flush(EmuTime time)
 
 void MSXMidiTap::allNotesOff(EmuTime time)
 {
-	for (auto& chip : chips) chip->finish();
+	uint32_t tick = tickOf(time);
+	for (auto& chip : chips) chip->finish(tick);
 	flush(time);
+	if (cleanActive) flushClean(time, tick, true);
+	// and for what the converters do not know about (notes cut short, a
+	// connector plugged in while playing, ...): all sound off + all notes off
+	for (uint8_t channel = 0; channel < 16; ++channel) {
+		for (uint8_t controller : {uint8_t(120), uint8_t(123)}) {
+			outConnector.recvByte(uint8_t(0xB0 | channel), time);
+			outConnector.recvByte(controller, time);
+			outConnector.recvByte(0, time);
+		}
+	}
 }
 
 void MSXMidiTap::powerDown(EmuTime time)

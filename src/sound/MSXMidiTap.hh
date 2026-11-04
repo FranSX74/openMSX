@@ -9,6 +9,7 @@
 #include "outer.hh"
 
 #include <array>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -22,6 +23,10 @@ namespace openmsx {
   * Supports PSG, SCC and MSX-Music. The melodic voices get the MIDI channels
   * in the order the chips are first used (channel 10 is for the drums); the
   * voices that do not fit in the 15 channels are not sent.
+  *
+  * In the 'clean' mode (midi_record live clean) the output is delayed by
+  * LIVE_LATENCY_TICKS, which lets it drop glitches and write arpeggios as
+  * chords, as the export does.
   */
 class MSXMidiTap final : public MSXDevice, private MidiRecorder::Listener
 {
@@ -40,14 +45,23 @@ private:
 	struct ChipState {
 		ChipState(unsigned id_, MidiRecorder::Chip kind_) : id(id_), kind(kind_) {}
 		virtual ~ChipState() = default;
-		virtual void step(double g) = 0;
-		virtual void finish() = 0;
+		virtual void step(double g, uint32_t tick) = 0;
+		virtual void finish(uint32_t tick) = 0;
 
 		unsigned id;
 		MidiRecorder::Chip kind;
 		std::vector<midi::Track> tracks;
 		std::vector<int> channels; // MIDI channel of every track, -1: none
 		midi::Track* drums = nullptr; // not in 'tracks' for the PSG and OPLL
+
+		/** Clean mode: the events of a track (the drums last) wait here to be
+		  * cleaned, and then for their time to be sent. */
+		struct Lane {
+			Lane(bool melodic) : cleaner(melodic, true) {}
+			midi::LiveCleaner cleaner;
+			std::deque<midi::Event> ready;
+		};
+		std::vector<Lane> lanes;
 	};
 	struct PsgState;
 	struct SccState;
@@ -69,6 +83,10 @@ private:
 	void step(EmuTime time);
 	void flush(EmuTime time);
 	void sendEvents(midi::Track& track, int channel, EmuTime time);
+	void sendEvent(const midi::Event& e, int channel, EmuTime time);
+	/** Clean mode. 'all': send everything that is waiting. */
+	void flushClean(EmuTime time, uint32_t now, bool all);
+	[[nodiscard]] uint32_t tickOf(EmuTime time) const;
 	void allNotesOff(EmuTime time);
 
 private:
@@ -84,6 +102,7 @@ private:
 	MidiOutConnector outConnector;
 	std::vector<std::unique_ptr<ChipState>> chips;
 	int nextChannel = 0;
+	bool cleanActive = false;
 	EmuTime start;
 	EmuTime nextStep;
 };

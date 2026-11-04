@@ -104,6 +104,15 @@ public:
 				recorder.setVolume(chip, uint8_t(v), motherBoard.getCurrentTime());
 			}
 			result = int(recorder.getVolume(chip));
+		} else if (sub == "live") {
+			checkNumArgs(tokens, Between{2, 3}, "live ?raw|clean?");
+			if (tokens.size() == 3) {
+				auto v = tokens[2].getString();
+				if (v == "raw") recorder.setLiveMode(MidiRecorder::LiveMode::RAW);
+				else if (v == "clean") recorder.setLiveMode(MidiRecorder::LiveMode::CLEAN);
+				else throw CommandException("Expected raw or clean, got: ", v);
+			}
+			result = (recorder.getLiveMode() == MidiRecorder::LiveMode::RAW) ? "raw" : "clean";
 		} else if (sub == "detail") {
 			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
 			if (tokens.size() == 3) {
@@ -136,6 +145,9 @@ public:
 		       "                              write them as drum hits (default: off, plain notes)\n"
 		       "midi_record volume psg|scc|opll ?0-127?  channel volume (CC#7) of the voices of a\n"
 		       "                              chip, to balance them (defaults 85, 120, 100)\n"
+		       "midi_record live ?raw|clean?  real-time output of the MIDI Tap: raw (default) sends\n"
+		       "                              every note at once; clean sends it 0.3 s late, without\n"
+		       "                              glitches and with arpeggios as chords (if arpeggio is on)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -143,11 +155,13 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 8>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion", "volume"});
+			completeString(tokens, std::array<std::string_view, 9>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion", "volume", "live"});
 		} else if (tokens.size() == 3 && tokens[1] == "percussion") {
 			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
 		} else if (tokens.size() == 3 && tokens[1] == "volume") {
 			completeString(tokens, std::array<std::string_view, 3>{"psg", "scc", "opll"});
+		} else if (tokens.size() == 3 && tokens[1] == "live") {
+			completeString(tokens, std::array<std::string_view, 2>{"raw", "clean"});
 		} else if (tokens.size() == 3 && tokens[1] == "detail") {
 			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {

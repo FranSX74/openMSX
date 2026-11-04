@@ -140,6 +140,13 @@ public:
 	void setDetectPercussion(bool value) { detectPercussion = value; }
 	[[nodiscard]] bool getDetectPercussion() const { return detectPercussion; }
 
+	/** Real-time output (MIDI Tap). RAW: every note at once, as the chips play
+	  * it. CLEAN: sent with a delay of LIVE_LATENCY_TICKS, with glitches
+	  * removed and arpeggios as chords. */
+	enum class LiveMode : uint8_t { RAW, CLEAN };
+	void setLiveMode(LiveMode value) { liveMode = value; }
+	[[nodiscard]] LiveMode getLiveMode() const { return liveMode; }
+
 	void setDetail(Detail value) { detail = value; }
 	[[nodiscard]] Detail getDetail() const { return detail; }
 
@@ -182,6 +189,7 @@ private:
 	bool arpeggioChords = true;
 	bool detectPercussion = false;
 	Detail detail = Detail::FULL;
+	LiveMode liveMode = LiveMode::RAW;
 	std::unique_ptr<MidiRecordCmd> command;
 };
 
