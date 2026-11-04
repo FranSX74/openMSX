@@ -56,7 +56,10 @@ struct RegFunction {
 		: subs(subs_), toolTip(toolTip_), displayRegs(displayRegs_) {}
 
 	[[nodiscard]] TemporaryString explain(uint32_t value, const Regs& regs) const {
-		return display ? display(value) : displayRegs(value, regs);
+		// Not 'cond ? a : b': MSVC wants a move constructor for that (and
+		// TemporaryString has none), separate returns are elided by all.
+		if (display) return display(value);
+		return displayRegs(value, regs);
 	}
 
 	// VDPRegisterViewer::drawSection() draws this item when 'subs[0].reg' or
