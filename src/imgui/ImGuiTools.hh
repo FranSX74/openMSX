@@ -27,6 +27,7 @@ private:
 private:
 	void paintScreenshot();
 	void paintRecord();
+	void paintMidiRecord();
 	void paintNotes();
 
 	[[nodiscard]] bool screenshotNameExists() const;
@@ -38,6 +39,8 @@ private:
 private:
 	bool showScreenshot = false;
 	bool showRecord = false;
+	bool showMidiRecord = false;
+	std::string midiRecordName;
 
 	std::string screenshotName;
 	enum class SsType : int { RENDERED, MSX, NUM };
@@ -62,6 +65,7 @@ private:
 	static constexpr auto persistentElements = std::tuple{
 		PersistentElement{"showScreenshot",  &ImGuiTools::showScreenshot},
 		PersistentElement{"showRecord", &ImGuiTools::showRecord},
+		PersistentElement{"showMidiRecord", &ImGuiTools::showMidiRecord},
 		PersistentElementMax{"screenshotType", &ImGuiTools::screenshotType, static_cast<int>(SsType::NUM)},
 		PersistentElementMax{"screenshotSize", &ImGuiTools::screenshotSize, static_cast<int>(SsSize::NUM)},
 		PersistentElement{"screenshotWithOsd", &ImGuiTools::screenshotWithOsd},

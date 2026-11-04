@@ -27,6 +27,7 @@
 #include "MSXEventDistributor.hh"
 #include "MSXMapperIO.hh"
 #include "MSXMixer.hh"
+#include "MidiRecorder.hh"
 #include "Observer.hh"
 #include "PanasonicMemory.hh"
 #include "Pluggable.hh"
@@ -227,6 +228,7 @@ MSXMotherBoard::MSXMotherBoard(Reactor& reactor_)
 	, msxMixer(std::make_unique<MSXMixer>(
 		reactor.getMixer(), *this,
 		reactor.getGlobalSettings()))
+	, midiRecorder(std::make_unique<MidiRecorder>(*this))
 	, videoSourceSetting(*msxCommandController)
 	, suppressMessagesSetting(*msxCommandController, "suppressmessages",
 		"Suppress info, warning and error messages for this machine. "
