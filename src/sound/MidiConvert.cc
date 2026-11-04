@@ -143,11 +143,160 @@ void DrumVoice::tick(Track& t, uint32_t tick)
 	if (drum >= 0 && ++age >= DRUM_MAX_STEPS) release(t, tick);
 }
 
+PsgConverter::PsgConverter(bool detailed)
+{
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void PsgConverter::write(unsigned reg, uint8_t value, double time)
+{
+	if (reg < 16) {
+		regs[reg] = value;
+		if (reg == 13) envStart = time;
+	}
+}
+
+void PsgConverter::step(double g, uint32_t tick, float clock,
+                        const std::array<Track*, 3>& tones, Track& drums)
+{
+	unsigned mixer = regs[7];
+	unsigned noisePeriod = regs[6] & 0x1F;
+	unsigned envShape = regs[13] & 0x0F;
+	unsigned envPeriod = std::max(1u, unsigned(regs[11] | (regs[12] << 8)));
+	double envStepSeconds = 16.0 * envPeriod / double(clock);
+	bool envRepeats = envShape >= 8 && !(envShape & 1);
+	double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
+	bool buzz = envRepeats &&
+	            (16.0 * envStepSeconds < BUZZ_CYCLE_SECONDS);
+
+	for (unsigned v = 0; v < 3; ++v) {
+		bool toneOn  = !(mixer & (1u << v));
+		bool noiseOn = !(mixer & (8u << v));
+		unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
+
+		// Buzzer bass: repeating envelope, no noise, and either no tone
+		// or a tone that is a harmonic of the envelope.
+		bool usesEnv = regs[8 + v] & 0x10;
+		bool envBass = false;
+		double envFreq = 0.0;
+		if (usesEnv && envRepeats && !noiseOn &&
+		    envSteps * envStepSeconds < BUZZ_BASS_CYCLE_SECONDS) {
+			envFreq = 1.0 / (envSteps * envStepSeconds);
+			if (!toneOn) {
+				envBass = true;
+			} else if (period >= MIN_PERIOD) {
+				double r = (double(clock) / (16.0 * period)) / envFreq;
+				envBass = r >= 1.5 &&
+				          std::abs(r - std::round(r)) <= 0.1 + 0.02 * r;
+			}
+		}
+
+		unsigned level = regs[8 + v] & 0x0F;
+		if (usesEnv) {
+			if (buzz || envBass) {
+				level = 11;
+			} else {
+				auto stepNo = uint64_t(std::max(0.0, g - envStart) / envStepSeconds);
+				level = envelopeLevel(envShape, stepNo);
+			}
+		}
+		bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
+		double fine = 0.0;
+		if (envBass) {
+			fine = fineNoteForFrequency(envFreq);
+		} else if (active) {
+			fine = fineNoteForFrequency(double(clock) / (16.0 * period));
+		}
+		tone[v].update(*tones[v], tick, active, fine, level, false,
+		               envBass ? PROGRAM_SYNTH_BASS : PROGRAM_SQUARE_LEAD);
+
+		// ---- noise (drums) ----
+		auto& nv = noise[v];
+		bool nActive = noiseOn && level > 0;
+		nv.tick(drums, tick);
+		if (!nActive) {
+			nv.release(drums, tick);
+		} else {
+			int drum = drumForNoise(noisePeriod);
+			if (!noiseWasOn[v]) {
+				nv.hit(drums, tick, drum, level);
+				pendDrum[v] = -1;
+			} else if (nv.drum >= 0 && drum != nv.drum) {
+				// Different band: hit again, but only
+				// once it is stable for a few steps.
+				if (pendDrum[v] != drum) {
+					pendDrum[v] = drum;
+					pendCount[v] = 1;
+				} else if (++pendCount[v] >= 3) {
+					nv.hit(drums, tick, drum, level);
+					pendDrum[v] = -1;
+				}
+			}
+		}
+		noiseWasOn[v] = nActive;
+	}
+}
+
+void PsgConverter::finish(uint32_t tick, const std::array<Track*, 3>& tones, Track& drums)
+{
+	for (unsigned v = 0; v < 3; ++v) {
+		tone[v].finish(*tones[v], tick);
+		noise[v].release(drums, tick);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Post-processing of a track
 // ---------------------------------------------------------------------------
 
-void collapseArpeggios(Track& t)
+// Cut the notes into the runs and chords the arpeggio detection works on.
+// 'emitChord(a, b)' is called for every segment notes[a..b] that may be a
+// chord, 'newSegment(k)' for the first note of every segment (a segment also
+// ends where a run of short notes ends).
+template<typename Notes, typename EmitChord, typename NewSegment>
+static void arpSegments(const Notes& notes, EmitChord emitChord, NewSegment newSegment)
+{
+	constexpr size_t NONE = size_t(-1);
+	size_t i = 0;
+	while (i < notes.size()) {
+		// find a run of short notes that follow each other closely
+		size_t j = i;
+		auto fits = [&](size_t k) {
+			return notes[k].off != NONE && notes[k].t1 - notes[k].t0 <= ARP_NOTE_MAX_TICKS;
+		};
+		if (!fits(i)) { newSegment(i); ++i; continue; }
+		while (j + 1 < notes.size() && fits(j + 1) &&
+		       notes[j + 1].t0 - notes[j].t1 <= ARP_GAP_MAX_TICKS) ++j;
+		// cut the run into chords: a pitch that is not part of the current
+		// cycle starts a new chord once the cycle has been repeated
+		size_t segStart = i;
+		newSegment(i);
+		std::array<uint8_t, ARP_MAX_PITCHES> set = {};
+		size_t distinct = 0;
+		bool repeated = false;
+		for (size_t k = i; k <= j; ++k) {
+			bool found = false;
+			for (size_t q = 0; q < distinct; ++q) found |= set[q] == notes[k].pitch;
+			if (found) {
+				repeated = true;
+			} else if (distinct < ARP_MAX_PITCHES && !repeated) {
+				set[distinct++] = notes[k].pitch;
+			} else {
+				emitChord(segStart, k - 1);
+				newSegment(k);
+				segStart = k;
+				set = {};
+				set[0] = notes[k].pitch;
+				distinct = 1;
+				repeated = false;
+			}
+		}
+		if (repeated) emitChord(segStart, j);
+		i = j + 1;
+	}
+}
+
+void collapseArpeggios(Track& t, const ArpContinuation* cont)
 {
 	struct Note {
 		size_t on, off;
@@ -190,7 +339,16 @@ void collapseArpeggios(Track& t)
 			if (!found) pitches[distinct++] = notes[k].pitch;
 			vel = std::max<unsigned>(vel, notes[k].vel);
 		}
-		if (distinct < 2 || b - a + 1 < std::max(ARP_MIN_NOTES, 2 * distinct)) return;
+		// the rest of an arpeggio that was cut in pieces: it continues the
+		// chord of the previous piece, however few notes are left
+		bool continues = cont && a == 0 && b > a &&
+		                 notes[0].t0 - cont->tick <= ARP_GAP_MAX_TICKS;
+		for (size_t k = a; continues && k <= b; ++k) {
+			continues = std::ranges::find(cont->pitches, notes[k].pitch) != cont->pitches.end();
+		}
+		if (!continues &&
+		    (distinct < 2 || b - a + 1 < std::max(ARP_MIN_NOTES, 2 * distinct))) return;
+		if (continues && distinct < 1) return;
 		uint32_t t0 = notes[a].t0, t1 = notes[b].t1;
 		for (size_t k = a; k <= b; ++k) {
 			removed[notes[k].on] = true;
@@ -214,41 +372,7 @@ void collapseArpeggios(Track& t)
 		changed = true;
 	};
 
-	size_t i = 0;
-	while (i < notes.size()) {
-		// find a run of short notes that follow each other closely
-		size_t j = i;
-		auto fits = [&](size_t k) {
-			return notes[k].off != NONE && notes[k].t1 - notes[k].t0 <= ARP_NOTE_MAX_TICKS;
-		};
-		if (!fits(i)) { ++i; continue; }
-		while (j + 1 < notes.size() && fits(j + 1) &&
-		       notes[j + 1].t0 - notes[j].t1 <= ARP_GAP_MAX_TICKS) ++j;
-		// cut the run into chords: a pitch that is not part of the current
-		// cycle starts a new chord once the cycle has been repeated
-		size_t segStart = i;
-		std::array<uint8_t, ARP_MAX_PITCHES> set = {};
-		size_t distinct = 0;
-		bool repeated = false;
-		for (size_t k = i; k <= j; ++k) {
-			bool found = false;
-			for (size_t q = 0; q < distinct; ++q) found |= set[q] == notes[k].pitch;
-			if (found) {
-				repeated = true;
-			} else if (distinct < ARP_MAX_PITCHES && !repeated) {
-				set[distinct++] = notes[k].pitch;
-			} else {
-				emitChord(segStart, k - 1);
-				segStart = k;
-				set = {};
-				set[0] = notes[k].pitch;
-				distinct = 1;
-				repeated = false;
-			}
-		}
-		if (repeated) emitChord(segStart, j);
-		i = j + 1;
-	}
+	arpSegments(notes, emitChord, [](size_t) {});
 	if (!changed) return;
 
 	std::vector<Event> out;
@@ -377,6 +501,145 @@ void dropShortNotes(Track& t, uint32_t minTicks)
 		if ((ev[i].data[0] & 0xF0) == 0x90 && ev[i].data[2] != 0) ++t.used;
 	}
 	ev = std::move(out);
+}
+
+// ---------------------------------------------------------------------------
+// Real-time cleaning
+// ---------------------------------------------------------------------------
+
+namespace {
+struct LiveNote {
+	size_t on;
+	size_t off; // SIZE_MAX: still sounding
+	uint32_t t0, t1;
+	uint8_t pitch;
+};
+constexpr size_t NO_EVENT = size_t(-1);
+}
+
+static std::vector<LiveNote> pairNotes(const std::vector<Event>& ev)
+{
+	std::vector<LiveNote> notes;
+	std::array<size_t, 128> open;
+	open.fill(NO_EVENT);
+	for (size_t i = 0; i < ev.size(); ++i) {
+		uint8_t status = ev[i].data[0] & 0xF0;
+		if (status != 0x80 && status != 0x90) continue;
+		uint8_t pitch = ev[i].data[1] & 0x7F;
+		if (status == 0x90 && ev[i].data[2] != 0) {
+			if (open[pitch] != NO_EVENT) continue;
+			open[pitch] = notes.size();
+			notes.push_back({i, NO_EVENT, ev[i].tick, ev[i].tick, pitch});
+		} else if (open[pitch] != NO_EVENT) {
+			notes[open[pitch]].off = i;
+			notes[open[pitch]].t1 = ev[i].tick;
+			open[pitch] = NO_EVENT;
+		}
+	}
+	return notes;
+}
+
+size_t LiveCleaner::findSplit(uint32_t now, bool requireSafe) const
+{
+	auto notes = pairNotes(buf);
+	// a note that is still sounding and is already too long for an arpeggio
+	auto isLong = [&](const LiveNote& n) {
+		return (n.off != NO_EVENT) ? n.t1 - n.t0 > ARP_NOTE_MAX_TICKS
+		                           : now - n.t0 > ARP_NOTE_MAX_TICKS;
+	};
+	// the notes that start a segment of the arpeggio detection: a cut there
+	// does not change what the detection finds
+	std::vector<bool> segStart(notes.size() + 1, false);
+	if (requireSafe) {
+		std::vector<LiveNote> closed;
+		for (const auto& n : notes) {
+			if (n.off == NO_EVENT) break;
+			closed.push_back(n);
+		}
+		arpSegments(closed, [](size_t, size_t) {}, [&](size_t k) { segStart[k] = true; });
+	}
+	auto safe = [&](size_t k, const LiveNote* prev, const LiveNote* next) {
+		if (!requireSafe || !prev || isLong(*prev)) return true;
+		if (next && k < notes.size() && notes[k].off != NO_EVENT && segStart[k]) return true;
+		uint32_t gap = (next ? next->t0 : now) - prev->t1;
+		return !(gap <= ARP_GAP_MAX_TICKS && (!next || !isLong(*next)));
+	};
+	size_t best = 0;
+	const LiveNote* prev = nullptr;
+	for (size_t k = 0; k < notes.size(); ++k) {
+		const auto& n = notes[k];
+		if (n.on > 0 && safe(k, prev, &n)) best = n.on;
+		if (n.off == NO_EVENT) {
+			// sounding: the events up to its note-on can go too
+			if (isLong(n) && safe(k + 1, &n, nullptr)) best = n.on + 1;
+			return best;
+		}
+		prev = &n;
+	}
+	if (safe(notes.size(), prev, nullptr)) best = buf.size();
+	return best;
+}
+
+void LiveCleaner::finalize(size_t split, bool chopped, std::deque<Event>& out)
+{
+	Track piece("", Track::Group::PSG_SCC, true);
+	piece.events.assign(buf.begin(), buf.begin() + ptrdiff_t(split));
+	buf.erase(buf.begin(), buf.begin() + ptrdiff_t(split));
+	ArpContinuation cont{chopPitches, chopTick};
+	if (arpeggio) collapseArpeggios(piece, chopPitches.empty() ? nullptr : &cont);
+	dropShortNotes(piece, GLITCH_NOTE_TICKS);
+
+	for (const auto& e : piece.events) {
+		uint8_t status = e.data[0] & 0xF0;
+		if (status == 0x90 && e.data[2] != 0 && !chopPitches.empty() &&
+		    e.tick - chopTick <= ARP_GAP_MAX_TICKS &&
+		    std::ranges::find(chopPitches, e.data[1]) != chopPitches.end()) {
+			// continuation of a chord: take back its note-off
+			auto it = std::find_if(out.rbegin(), out.rend(), [&](const Event& o) {
+				return (o.data[0] & 0xF0) == 0x80 && o.data[1] == e.data[1];
+			});
+			if (it != out.rend()) {
+				out.erase(std::next(it).base());
+				continue;
+			}
+		}
+		out.push_back(e);
+	}
+	chopPitches.clear();
+	if (chopped) {
+		uint32_t last = 0;
+		for (const auto& e : piece.events) {
+			if ((e.data[0] & 0xF0) == 0x80) last = std::max(last, e.tick);
+		}
+		chopTick = last;
+		for (const auto& e : piece.events) {
+			if ((e.data[0] & 0xF0) == 0x80 && e.tick == last) chopPitches.push_back(e.data[1]);
+		}
+	}
+}
+
+void LiveCleaner::process(uint32_t now, std::deque<Event>& out)
+{
+	if (buf.empty()) return;
+	if (!melodic) {
+		drain(out);
+		return;
+	}
+	if (size_t split = findSplit(now, true)) finalize(split, false, out);
+	if (!buf.empty() && now - buf.front().tick > LIVE_MAX_HOLD_TICKS) {
+		if (size_t split = findSplit(now, false)) finalize(split, true, out);
+	}
+}
+
+void LiveCleaner::drain(std::deque<Event>& out)
+{
+	if (melodic) {
+		finalize(buf.size(), false, out);
+	} else {
+		out.insert(out.end(), buf.begin(), buf.end());
+		buf.clear();
+	}
+	chopPitches.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +820,127 @@ double opllPitchOffset(unsigned inst, const std::array<uint8_t, 64>& regs)
 	unsigned m = OPLL_MULT_HALVES[mod];
 	unsigned g = weakModulator ? c : std::gcd(c, m);
 	return 12.0 * std::log2(double(g) / 2.0);
+}
+
+SccConverter::SccConverter(bool detailed)
+{
+	dirty.fill(true);
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void SccConverter::write(unsigned reg, uint8_t value)
+{
+	regs[reg] = value;
+	if (reg < 0xA0) dirty[reg >> 5] = true;
+	if (reg >= 0xA0 && reg < 0xAA) {
+		// as in the SCC: the deformation register that is active at the time of
+		// the frequency write decides how many bits of the period are used
+		unsigned c = (reg - 0xA0) / 2;
+		unsigned per = regs[0xA0 + 2 * c] | ((regs[0xA1 + 2 * c] & 0x0F) << 8);
+		if (regs[0xB0] & 2) per &= 0xFF;
+		else if (regs[0xB0] & 1) per >>= 8;
+		effPeriod[c] = per;
+	}
+}
+
+void SccConverter::step(uint32_t tick, float clock, const std::array<Track*, 5>& tones)
+{
+	for (unsigned c = 0; c < 5; ++c) {
+		if (dirty[c]) {
+			wave[c] = classifyWave(&regs[c * 32]);
+			dirty[c] = false;
+		}
+		unsigned period = effPeriod[c];
+		unsigned vol = regs[0xAA + c] & 0x0F;
+		bool enabled = regs[0xAF] & (1u << c);
+		// quiet wave forms sound softer
+		unsigned level = (vol * wave[c].peak + 64) / 128;
+		if (vol > 0 && wave[c].peak > 0) level = std::max(level, 1u);
+		bool active = enabled && level > 0 && period >= 8;
+		double fine = 0.0;
+		if (active) {
+			fine = fineNoteForFrequency(double(clock) / (32.0 * (period + 1)));
+		}
+		tone[c].update(*tones[c], tick, active, fine, level, false, wave[c].program);
+	}
+}
+
+void SccConverter::finish(uint32_t tick, const std::array<Track*, 5>& tones)
+{
+	for (unsigned c = 0; c < 5; ++c) tone[c].finish(*tones[c], tick);
+}
+
+OpllConverter::OpllConverter(bool detailed)
+{
+	for (auto& v : tone) v.detailed = detailed;
+}
+
+void OpllConverter::write(unsigned r, uint8_t value)
+{
+	if (r >= 64) return;
+	if (r >= 0x20 && r <= 0x28) {
+		// count key-on edges, so a quick off/on between two grid points
+		// still retriggers the note
+		bool was = regs[r] & 0x10;
+		if (!was && (value & 0x10)) ++keyEdges[r - 0x20];
+	} else if (r == 0x0E) {
+		for (unsigned b = 0; b < 5; ++b) {
+			bool was = regs[r] & (1u << b);
+			if (!was && (value & (1u << b))) ++drumEdges[b];
+		}
+	}
+	regs[r] = value;
+}
+
+void OpllConverter::step(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack)
+{
+	bool rhythm = regs[0x0E] & 0x20;
+	for (unsigned c = 0; c < 9; ++c) {
+		bool keyOn = regs[0x20 + c] & 0x10;
+		unsigned fnum = regs[0x10 + c] | ((regs[0x20 + c] & 1) << 8);
+		unsigned block = (regs[0x20 + c] >> 1) & 7;
+		unsigned inst = regs[0x30 + c] >> 4;
+		unsigned att = regs[0x30 + c] & 15;
+		unsigned level = 15 - att;
+		bool melodic = !(rhythm && c >= 6);
+		bool active = melodic && keyOn && fnum > 0 && level > 0;
+		double fine = 0.0;
+		if (active) {
+			double freq = double(fnum) * double(1u << block)
+			            * (OPLL_CLOCK / 72.0) / 524288.0;
+			fine = fineNoteForFrequency(freq);
+			fine += opllPitchOffset(inst, regs);
+		}
+		bool force = keyEdges[c] != lastKeyEdges[c];
+		lastKeyEdges[c] = keyEdges[c];
+		tone[c].update(*tones[c], tick, active, fine, level,
+		               force && keyOn, OPLL_PROGRAMS[inst]);
+	}
+
+	// rhythm section
+	std::array<unsigned, 5> att = {
+		unsigned(regs[0x37] >> 4),   // hi-hat
+		unsigned(regs[0x38] & 15),   // top cymbal
+		unsigned(regs[0x38] >> 4),   // tom-tom
+		unsigned(regs[0x37] & 15),   // snare drum
+		unsigned(regs[0x36] & 15)};  // bass drum
+	for (unsigned b = 0; b < 5; ++b) {
+		bool on = rhythm && (regs[0x0E] & (1u << b));
+		drums[b].tick(drumTrack, tick);
+		if (!on) {
+			drums[b].release(drumTrack, tick);
+		} else if (drumEdges[b] != lastDrumEdges[b] || first) {
+			drums[b].hit(drumTrack, tick, OPLL_DRUMS[b], 15 - att[b]);
+		}
+		lastDrumEdges[b] = drumEdges[b];
+	}
+	first = false;
+}
+
+void OpllConverter::finish(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack)
+{
+	for (unsigned c = 0; c < 9; ++c) tone[c].finish(*tones[c], tick);
+	for (auto& d : drums) d.release(drumTrack, tick);
 }
 
 } // namespace openmsx::midi

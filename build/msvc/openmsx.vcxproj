@@ -699,6 +699,7 @@
     <ClCompile Include="$(OpenMSXSrcDir)\sound\Mixer.cc" />
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MidiConvert.cc" />
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MidiRecorder.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\sound\MSXMidiTap.cc" />
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MSXMakoto.cc" />
     <ClCompile Include="$(OpenMSXSrcDir)\sound\YM2608.cc" />
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MSXAudio.cc" />
@@ -1350,6 +1351,7 @@
     <None Include="$(OpenMSXSrcDir)\sound\Mixer.hh" />
     <None Include="$(OpenMSXSrcDir)\sound\MidiConvert.hh" />
     <None Include="$(OpenMSXSrcDir)\sound\MidiRecorder.hh" />
+    <None Include="$(OpenMSXSrcDir)\sound\MSXMidiTap.hh" />
     <None Include="$(OpenMSXSrcDir)\sound\MSXAudio.hh" />
     <None Include="$(OpenMSXSrcDir)\sound\MSXFmPac.hh" />
     <None Include="$(OpenMSXSrcDir)\sound\MSXMixer.hh" />

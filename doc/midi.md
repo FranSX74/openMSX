@@ -1,6 +1,6 @@
-# MIDI export
+# MIDI export and MIDI Tap
 
-openMSX can record what the PSG, the SCC and the MSX-Music play and save it as a Standard MIDI File, one track per chip channel, with the `midi_record` command.
+openMSX can turn what the PSG, the SCC and the MSX-Music play into MIDI in two ways: it can record the music into a Standard MIDI File (the `midi_record` command), and it can send it to a synthesizer or a MIDI program while the game runs (the `MIDI_Tap` extension).
 
 ## What it does
 
@@ -27,7 +27,11 @@ midi_record status
 midi_record detail full|simple ;# full (default): as the chips; simple: fewer, longer notes
 midi_record percussion on|off  ;# detect falling-tone drums and write them as drum hits (off)
 midi_record arpeggio on|off    ;# arpeggios as chords (default) or as fast notes
+midi_record volume psg|scc|opll 0-127  ;# channel volume of each chip (defaults 85, 120, 100)
+midi_record live raw|clean     ;# real-time output only, see "Real-time output"
 ```
+
+Every setting command without its value prints the current value.
 
 **GUI:** *Tools → Capture → MIDI (PSG)...* opens a small window with a name
 field, Start/Stop and "Open MIDI folder". If the file exists you are asked
@@ -102,6 +106,12 @@ The chip state is sampled every 5 ms from the logged register writes.
   4 notes for 2 pitches, and always two full cycles) are written as one sustained chord, because a chip voice that
   cycles through a chord every frame is heard as that chord. Slow patterns and
   sweeps are left alone. `midi_record arpeggio off` writes every note instead.
+- **Channel volume (CC#7)** is set once per voice, per chip: PSG 85, SCC 120,
+  MSX-Music 100. The SCC waves are quieter than the PSG squares and the drums of
+  a General MIDI sound font, so the SCC gets more. Change it with
+  `midi_record volume` (in the real-time output the open channels are updated at
+  once). The best balance also depends on the instruments your synthesizer
+  plays on each channel.
 - **PSG noise** becomes GM drums in 6 bands (hi-hats, snare, toms, bass drum).
 - **MSX-Music**: the 15 built-in instruments are mapped to General MIDI
   programs, key-on edges are tracked so a quick off/on of the same note is a new
@@ -138,6 +148,74 @@ fluidsynth -a pipewire /usr/share/soundfonts/FluidR3_GM.sf2 song.mid
 ```
 
 Good editors to inspect the tracks: Rosegarden, MuseScore, Ardour, LMMS.
+
+## Real-time output (MIDI Tap)
+
+The `MIDI_Tap` extension sends the music to a MIDI out connector **while the
+game runs**, so you can hear it on a synthesizer, record it in a sequencer, or
+route it to any MIDI program. It converts PSG, SCC and MSX-Music with the same
+rules as the export.
+
+**Quick start on Linux** (with [FluidSynth](https://www.fluidsynth.org) or
+[QSynth](https://qsynth.sourceforge.io) running, any soundfont):
+
+```
+openmsx -machine msx2 -ext MIDI_Tap -cart game.rom
+```
+
+then in the openMSX console (F10):
+
+```
+plug MIDI-Tap-out <TAB>                    ;# lists the MIDI ports you can plug
+plug MIDI-Tap-out "FLUID Synth (12345)"    ;# e.g. the name of your synthesizer
+set master_volume 0                        ;# optional: mute openMSX, hear only the synth
+midi_record live clean                     ;# optional: cleaner output (see below)
+```
+
+`plug MIDI-Tap-out midi-out-logger` writes the raw MIDI bytes to the file of the
+setting `midi-out-logfilename` instead (useful to test, not to listen).
+The extension is in `share/extensions/MIDI_Tap.xml`; if you keep your own copy
+of the openMSX extensions in `~/.openMSX/share/extensions`, copy it there too.
+
+**Which MIDI channel is what.** The voices get the channels in the order the
+chips are first used, skipping channel 10, which is always the drums (PSG noise
+and the MSX-Music rhythm). Example: a game with PSG and SCC uses channels 1-3 for
+the PSG, 4-8 for the SCC, and 10 for the drums. Voices beyond 15 are not sent.
+Each channel gets its program, pan and volume when it is opened.
+
+**Two modes** (`midi_record live raw|clean`):
+
+| | `raw` (default) | `clean` |
+|---|---|---|
+| Delay | none | 0.3 s |
+| Glitch notes (< 10 ms) | sent | removed |
+| Arpeggios | many fast notes | one chord (like the export) |
+| Good for | playing along, lowest latency | listening, recording in a sequencer |
+
+`clean` looks 0.3 s into the past to decide, which is why it has a delay. If you
+record the output in a sequencer, shift the recording 0.3 s earlier. The
+setting `midi_record arpeggio off` also applies to `clean`. Percussion detection
+and the `simple` detail level are only for the export.
+
+**Volumes.** Same as in the export: `midi_record volume psg|scc|opll 0-127`,
+applied at once to the open channels.
+
+**Silence at the end.** When you close openMSX, reset or power off the MSX, or
+load a state, "All Sound Off" and "All Notes Off" are sent on all 16 channels,
+so no note is left hanging in the synthesizer.
+
+**Savestates and rewind.** They work: the registers of the chips and the MIDI
+channels are saved, and after a load or a `reverse goback` the synthesizer is
+silenced and the voices start their notes again from where the music is.
+The notes that were sounding start again (you hear them re-attacked).
+Remember that `reverse goback` leaves the emulation paused (`set pause off`).
+The `midi-out-logger` does not reopen its file after a load, so it is not
+suitable to test this; a real MIDI port is.
+
+**Limitations.** Tested on Linux with ALSA (FluidSynth/QSynth). The MIDI ports
+of Windows and macOS use the standard openMSX MIDI code, but I have not tested
+them. If a game plays digital samples, they are not in the MIDI. The SCC has no
+drum track (its percussion stays as notes).
 
 ## Credits
 

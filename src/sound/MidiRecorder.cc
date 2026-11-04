@@ -90,6 +90,29 @@ public:
 				else throw CommandException("Expected on or off, got: ", v);
 			}
 			result = recorder.getDetectPercussion() ? "on" : "off";
+		} else if (sub == "volume") {
+			checkNumArgs(tokens, Between{3, 4}, "volume psg|scc|opll ?0-127?");
+			auto chipName = tokens[2].getString();
+			MidiRecorder::Chip chip;
+			if (chipName == "psg") chip = MidiRecorder::Chip::PSG;
+			else if (chipName == "scc") chip = MidiRecorder::Chip::SCC;
+			else if (chipName == "opll" || chipName == "msx-music") chip = MidiRecorder::Chip::OPLL;
+			else throw CommandException("Expected psg, scc or opll, got: ", chipName);
+			if (tokens.size() == 4) {
+				auto v = tokens[3].getInt(getInterpreter());
+				if (v < 0 || v > 127) throw CommandException("Volume must be 0..127");
+				recorder.setVolume(chip, uint8_t(v), motherBoard.getCurrentTime());
+			}
+			result = int(recorder.getVolume(chip));
+		} else if (sub == "live") {
+			checkNumArgs(tokens, Between{2, 3}, "live ?raw|clean?");
+			if (tokens.size() == 3) {
+				auto v = tokens[2].getString();
+				if (v == "raw") recorder.setLiveMode(MidiRecorder::LiveMode::RAW);
+				else if (v == "clean") recorder.setLiveMode(MidiRecorder::LiveMode::CLEAN);
+				else throw CommandException("Expected raw or clean, got: ", v);
+			}
+			result = (recorder.getLiveMode() == MidiRecorder::LiveMode::RAW) ? "raw" : "clean";
 		} else if (sub == "detail") {
 			checkNumArgs(tokens, Between{2, 3}, "detail ?full|simple?");
 			if (tokens.size() == 3) {
@@ -120,6 +143,11 @@ public:
 		       "                              pitch bend, no notes under 60 ms, arpeggios as chords)\n"
 		       "midi_record percussion ?on|off?  detect drums made with a fast falling tone and\n"
 		       "                              write them as drum hits (default: off, plain notes)\n"
+		       "midi_record volume psg|scc|opll ?0-127?  channel volume (CC#7) of the voices of a\n"
+		       "                              chip, to balance them (defaults 85, 120, 100)\n"
+		       "midi_record live ?raw|clean?  real-time output of the MIDI Tap: raw (default) sends\n"
+		       "                              every note at once; clean sends it 0.3 s late, without\n"
+		       "                              glitches and with arpeggios as chords (if arpeggio is on)\n"
 		       "midi_record arpeggio ?on|off?  write arpeggios as chords (on, default) or as\n"
 		       "                              fast single notes (off)\n";
 	}
@@ -127,9 +155,13 @@ public:
 	void tabCompletion(std::vector<std::string>& tokens) const override
 	{
 		if (tokens.size() == 2) {
-			completeString(tokens, std::array<std::string_view, 7>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion"});
+			completeString(tokens, std::array<std::string_view, 9>{"start", "stop", "toggle", "status", "arpeggio", "detail", "percussion", "volume", "live"});
 		} else if (tokens.size() == 3 && tokens[1] == "percussion") {
 			completeString(tokens, std::array<std::string_view, 2>{"on", "off"});
+		} else if (tokens.size() == 3 && tokens[1] == "volume") {
+			completeString(tokens, std::array<std::string_view, 3>{"psg", "scc", "opll"});
+		} else if (tokens.size() == 3 && tokens[1] == "live") {
+			completeString(tokens, std::array<std::string_view, 2>{"raw", "clean"});
 		} else if (tokens.size() == 3 && tokens[1] == "detail") {
 			completeString(tokens, std::array<std::string_view, 2>{"full", "simple"});
 		} else if (tokens.size() == 3 && tokens[1] == "arpeggio") {
@@ -186,6 +218,10 @@ void MidiRecorder::opllReset(unsigned id, EmuTime time)
 {
 	auto& s = chips[id];
 	s.regs.fill(0);
+	for (auto* l : listeners) {
+		l->opllWrite(id, 0x0E, 0, time);
+		for (unsigned r = 0x20; r <= 0x28; ++r) l->opllWrite(id, r, 0, time);
+	}
 	if (!recording) return;
 	log(id, 0x0E, 0, s.clock, time);
 	for (unsigned r = 0x20; r <= 0x28; ++r) log(id, r, 0, s.clock, time);
@@ -195,6 +231,7 @@ void MidiRecorder::sccReset(unsigned id, EmuTime time)
 {
 	auto& s = chips[id];
 	s.regs[0xAF] = 0;
+	for (auto* l : listeners) l->sccWrite(id, 0xAF, 0, time);
 	if (recording) log(id, 0xAF, 0, s.clock, time);
 }
 
@@ -281,21 +318,14 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				tracks.emplace_back(strCat("PSG", suffix, " ", voiceNames[v]),
 				                    Group::PSG_SCC, true);
 				tracks.back().setup(PROGRAM_SQUARE_LEAD,
-				                    uint8_t(v == 0 ? 40 : v == 1 ? 64 : 88));
+				                    uint8_t(v == 0 ? 40 : v == 1 ? 64 : 88),
+				                    volumes[unsigned(Chip::PSG)]);
 				tt[v] = &tracks.back();
 			}
 			tracks.emplace_back(strCat("PSG", suffix, " noise"), Group::PSG_SCC, false);
 			Track* drumTrack = &tracks.back();
 
-			std::array<uint8_t, 16> regs = {};
-			double envStart = 0.0;
-			std::array<ToneVoice, 3> tone;
-			for (auto& v : tone) v.detailed = detail == Detail::FULL;
-			std::array<DrumVoice, 3> noise;
-			std::array<bool, 3> noiseWasOn = {};
-			std::array<int, 3> pendDrum = {-1, -1, -1};
-			std::array<int, 3> pendCount = {};
-
+			PsgConverter psg(detail == Detail::FULL);
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
 				uint32_t tick = std::min(toTick(g), endTick);
@@ -303,93 +333,11 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
 					clock = e.clock;
-					if (e.reg < 16) {
-						regs[e.reg] = e.value;
-						if (e.reg == 13) envStart = e.time;
-					}
+					psg.write(e.reg, e.value, e.time);
 				}
-
-				unsigned mixer = regs[7];
-				unsigned noisePeriod = regs[6] & 0x1F;
-				unsigned envShape = regs[13] & 0x0F;
-				unsigned envPeriod = std::max(1u, unsigned(regs[11] | (regs[12] << 8)));
-				double envStepSeconds = 16.0 * envPeriod / double(clock);
-				bool envRepeats = envShape >= 8 && !(envShape & 1);
-				double envSteps = (envShape & 2) ? 32.0 : 16.0; // triangle: 2 ramps
-				bool buzz = envRepeats &&
-				            (16.0 * envStepSeconds < BUZZ_CYCLE_SECONDS);
-
-				for (unsigned v = 0; v < 3; ++v) {
-					bool toneOn  = !(mixer & (1u << v));
-					bool noiseOn = !(mixer & (8u << v));
-					unsigned period = regs[2 * v] | ((regs[2 * v + 1] & 0x0F) << 8);
-
-					// Buzzer bass: repeating envelope, no noise, and either no tone
-					// or a tone that is a harmonic of the envelope.
-					bool usesEnv = regs[8 + v] & 0x10;
-					bool envBass = false;
-					double envFreq = 0.0;
-					if (usesEnv && envRepeats && !noiseOn &&
-					    envSteps * envStepSeconds < BUZZ_BASS_CYCLE_SECONDS) {
-						envFreq = 1.0 / (envSteps * envStepSeconds);
-						if (!toneOn) {
-							envBass = true;
-						} else if (period >= MIN_PERIOD) {
-							double r = (double(clock) / (16.0 * period)) / envFreq;
-							envBass = r >= 1.5 &&
-							          std::abs(r - std::round(r)) <= 0.1 + 0.02 * r;
-						}
-					}
-
-					unsigned level = regs[8 + v] & 0x0F;
-					if (usesEnv) {
-						if (buzz || envBass) {
-							level = 11;
-						} else {
-							auto stepNo = uint64_t(std::max(0.0, g - envStart) / envStepSeconds);
-							level = envelopeLevel(envShape, stepNo);
-						}
-					}
-					bool active = (toneOn && level > 0 && period >= MIN_PERIOD) || envBass;
-					double fine = 0.0;
-					if (envBass) {
-						fine = fineNoteForFrequency(envFreq);
-					} else if (active) {
-						fine = fineNoteForFrequency(double(clock) / (16.0 * period));
-					}
-					tone[v].update(*tt[v], tick, active, fine, level, false,
-					               envBass ? PROGRAM_SYNTH_BASS : PROGRAM_SQUARE_LEAD);
-
-					// ---- noise (drums) ----
-					auto& nv = noise[v];
-					bool nActive = noiseOn && level > 0;
-					nv.tick(*drumTrack, tick);
-					if (!nActive) {
-						nv.release(*drumTrack, tick);
-					} else {
-						int drum = drumForNoise(noisePeriod);
-						if (!noiseWasOn[v]) {
-							nv.hit(*drumTrack, tick, drum, level);
-							pendDrum[v] = -1;
-						} else if (nv.drum >= 0 && drum != nv.drum) {
-							// Different band: hit again, but only
-							// once it is stable for a few steps.
-							if (pendDrum[v] != drum) {
-								pendDrum[v] = drum;
-								pendCount[v] = 1;
-							} else if (++pendCount[v] >= 3) {
-								nv.hit(*drumTrack, tick, drum, level);
-								pendDrum[v] = -1;
-							}
-						}
-					}
-					noiseWasOn[v] = nActive;
-				}
+				psg.step(g, tick, clock, tt, *drumTrack);
 			}
-			for (unsigned v = 0; v < 3; ++v) {
-				tone[v].finish(*tt[v], endTick);
-				noise[v].release(*drumTrack, endTick);
-			}
+			psg.finish(endTick, tt, *drumTrack);
 			if (detectPercussion) {
 				for (unsigned v = 0; v < 3; ++v) {
 					// Arpeggios first: their falling parts are not drums.
@@ -403,7 +351,7 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			std::array<Track*, 5> tt = {};
 			for (unsigned c = 0; c < 5; ++c) {
 				tracks.emplace_back(strCat("SCC ", suffix, c + 1), Group::PSG_SCC, true);
-				tracks.back().setup(PROGRAM_SQUARE_LEAD, 64);
+				tracks.back().setup(PROGRAM_SQUARE_LEAD, 64, volumes[unsigned(Chip::SCC)]);
 				tt[c] = &tracks.back();
 			}
 			Track* sccDrums = nullptr;
@@ -411,52 +359,18 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 				tracks.emplace_back(strCat("SCC ", suffix, "drums"), Group::PSG_SCC, false);
 				sccDrums = &tracks.back();
 			}
-			std::array<uint8_t, 256> regs = {};
-			std::array<bool, 5> dirty;
-			dirty.fill(true);
-			std::array<unsigned, 5> effPeriod = {}; // period after the deformation register
-			std::array<WaveInfo, 5> wave = {};
-			std::array<ToneVoice, 5> tone;
-			for (auto& v : tone) v.detailed = detail == Detail::FULL;
-
+			SccConverter scc(detail == Detail::FULL);
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
 				uint32_t tick = std::min(toTick(g), endTick);
 
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
-					regs[e.reg] = e.value;
-					if (e.reg < 0xA0) dirty[e.reg >> 5] = true;
-					if (e.reg >= 0xA0 && e.reg < 0xAA) {
-						// as in the SCC: the deformation register that is active at the time of
-						// the frequency write decides how many bits of the period are used
-						unsigned c = (e.reg - 0xA0) / 2;
-						unsigned per = regs[0xA0 + 2 * c] | ((regs[0xA1 + 2 * c] & 0x0F) << 8);
-						if (regs[0xB0] & 2) per &= 0xFF;
-						else if (regs[0xB0] & 1) per >>= 8;
-						effPeriod[c] = per;
-					}
+					scc.write(e.reg, e.value);
 				}
-				for (unsigned c = 0; c < 5; ++c) {
-					if (dirty[c]) {
-						wave[c] = classifyWave(&regs[c * 32]);
-						dirty[c] = false;
-					}
-					unsigned period = effPeriod[c];
-					unsigned vol = regs[0xAA + c] & 0x0F;
-					bool enabled = regs[0xAF] & (1u << c);
-					// quiet wave forms sound softer
-					unsigned level = (vol * wave[c].peak + 64) / 128;
-					if (vol > 0 && wave[c].peak > 0) level = std::max(level, 1u);
-					bool active = enabled && level > 0 && period >= 8;
-					double fine = 0.0;
-					if (active) {
-						fine = fineNoteForFrequency(double(clock) / (32.0 * (period + 1)));
-					}
-					tone[c].update(*tt[c], tick, active, fine, level, false, wave[c].program);
-				}
+				scc.step(tick, clock, tt);
 			}
-			for (unsigned c = 0; c < 5; ++c) tone[c].finish(*tt[c], endTick);
+			scc.finish(endTick, tt);
 			if (sccDrums) {
 				for (unsigned c = 0; c < 5; ++c) {
 					collapseArpeggios(*tt[c]);
@@ -470,89 +384,25 @@ MidiRecorder::Result MidiRecorder::convertAndWrite(double duration)
 			for (unsigned c = 0; c < 9; ++c) {
 				tracks.emplace_back(strCat("MSX-Music ", suffix, c + 1),
 				                    Group::MSX_MUSIC, true);
-				tracks.back().setup(OPLL_PROGRAMS[0], 64);
+				tracks.back().setup(OPLL_PROGRAMS[0], 64, volumes[unsigned(Chip::OPLL)]);
 				tt[c] = &tracks.back();
 			}
 			tracks.emplace_back(strCat("MSX-Music ", suffix, "rhythm"),
 			                    Group::MSX_MUSIC, false);
 			Track* drumTrack = &tracks.back();
 
-			std::array<uint8_t, 64> regs = {};
-			std::array<unsigned, 9> keyEdges = {};
-			std::array<unsigned, 9> lastKeyEdges = {};
-			std::array<unsigned, 5> drumEdges = {};
-			std::array<unsigned, 5> lastDrumEdges = {};
-			std::array<ToneVoice, 9> tone;
-			for (auto& v : tone) v.detailed = detail == Detail::FULL;
-			std::array<DrumVoice, 5> drums;
-
+			OpllConverter opll(detail == Detail::FULL);
 			for (uint64_t n = 0; n <= steps; ++n) {
 				double g = double(n) * GRID_SECONDS;
 				uint32_t tick = std::min(toTick(g), endTick);
 
 				while (idx < list.size() && list[idx]->time <= g) {
 					const auto& e = *list[idx++];
-					unsigned r = e.reg;
-					if (r < 64) {
-						if (r >= 0x20 && r <= 0x28) {
-							// count key-on edges, so a quick
-							// off/on between two grid points
-							// still retriggers the note
-							bool was = regs[r] & 0x10;
-							if (!was && (e.value & 0x10)) ++keyEdges[r - 0x20];
-						} else if (r == 0x0E) {
-							for (unsigned b = 0; b < 5; ++b) {
-								bool was = regs[r] & (1u << b);
-								if (!was && (e.value & (1u << b))) ++drumEdges[b];
-							}
-						}
-						regs[r] = e.value;
-					}
+					opll.write(e.reg, e.value);
 				}
-
-				bool rhythm = regs[0x0E] & 0x20;
-				for (unsigned c = 0; c < 9; ++c) {
-					bool keyOn = regs[0x20 + c] & 0x10;
-					unsigned fnum = regs[0x10 + c] | ((regs[0x20 + c] & 1) << 8);
-					unsigned block = (regs[0x20 + c] >> 1) & 7;
-					unsigned inst = regs[0x30 + c] >> 4;
-					unsigned att = regs[0x30 + c] & 15;
-					unsigned level = 15 - att;
-					bool melodic = !(rhythm && c >= 6);
-					bool active = melodic && keyOn && fnum > 0 && level > 0;
-					double fine = 0.0;
-					if (active) {
-						double freq = double(fnum) * double(1u << block)
-						            * (OPLL_CLOCK / 72.0) / 524288.0;
-						fine = fineNoteForFrequency(freq);
-						fine += opllPitchOffset(inst, regs);
-					}
-					bool force = keyEdges[c] != lastKeyEdges[c];
-					lastKeyEdges[c] = keyEdges[c];
-					tone[c].update(*tt[c], tick, active, fine, level,
-					               force && keyOn, OPLL_PROGRAMS[inst]);
-				}
-
-				// rhythm section
-				std::array<unsigned, 5> att = {
-					unsigned(regs[0x37] >> 4),   // hi-hat
-					unsigned(regs[0x38] & 15),   // top cymbal
-					unsigned(regs[0x38] >> 4),   // tom-tom
-					unsigned(regs[0x37] & 15),   // snare drum
-					unsigned(regs[0x36] & 15)};  // bass drum
-				for (unsigned b = 0; b < 5; ++b) {
-					bool on = rhythm && (regs[0x0E] & (1u << b));
-					drums[b].tick(*drumTrack, tick);
-					if (!on) {
-						drums[b].release(*drumTrack, tick);
-					} else if (drumEdges[b] != lastDrumEdges[b] || n == 0) {
-						drums[b].hit(*drumTrack, tick, OPLL_DRUMS[b], 15 - att[b]);
-					}
-					lastDrumEdges[b] = drumEdges[b];
-				}
+				opll.step(tick, tt, *drumTrack);
 			}
-			for (unsigned c = 0; c < 9; ++c) tone[c].finish(*tt[c], endTick);
-			for (auto& d : drums) d.release(*drumTrack, endTick);
+			opll.finish(endTick, tt, *drumTrack);
 		}
 	}
 
