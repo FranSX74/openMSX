@@ -1,0 +1,242 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unit tests (src/unittest, Catch2), the MSVC counterpart of the "unittest"
+  flavour of make and the "unittest" target of meson. The test sources are
+  compiled here (with UNITTEST defined) and linked with the object files of the
+  openmsx project of the same configuration, except main.obj. Build it with
+    msbuild -p:Configuration=Developer;Platform=x64 build\msvc\openmsx.sln
+  and run derived\x64-VC-Developer\unittest\unittest.exe
+-->
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Developer|Win32">
+      <Configuration>Developer</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Developer|x64">
+      <Configuration>Developer</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{1E73CAFA-A133-45EF-AA29-6B7218A15E0A}</ProjectGuid>
+    <RootNamespace>unittest</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>Unicode</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="..\3rdparty\3rdparty.props" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <OutDir>$(BuildDir)\unittest\</OutDir>
+    <IntDir>$(BuildDir)\unittest\build\</IntDir>
+    <TargetName>unittest</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalOptions>/utf-8 /constexpr:steps20000000 /MP %(AdditionalOptions)</AdditionalOptions>
+      <WarningLevel>Level4</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4324;4063;4121;4125;4127;4189;4201;4244;4310;4355;4505;4512;4611;4702;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalIncludeDirectories>$(OpenMSXConfigDir);$(DXSDK_DIR)\Include;$(ThirdPartySrcDir)\$(LibNameFreeType)\include;$(ThirdPartySrcDir)\$(LibNameGlew)\include;$(ThirdPartySrcDir)\$(LibNameLibPng);$(ThirdPartySrcDir)\$(LibNameSDL)\include;$(ThirdPartySrcDir)\$(LibNameSDL_ttf);$(ThirdPartySrcDir)\$(LibNameTheora)\include;$(ThirdPartySrcDir)\$(LibNameVorbis)\include;$(ThirdPartySrcDir)\$(LibNameOgg)\include;$(ThirdPartySrcDir)\$(LibNameTcl)\generic;$(ThirdPartySrcDir)\$(LibNameZlib);$(OpenMSXSrcDir);$(OpenMSXSrcDir)\3rdparty\ImGuiFileDialog;$(OpenMSXSrcDir)\3rdparty\imgui;$(OpenMSXSrcDir)\3rdparty\imgui_memory_editor;$(OpenMSXSrcDir)\cassette;$(OpenMSXSrcDir)\commands;$(OpenMSXSrcDir)\config;$(OpenMSXSrcDir)\console;$(OpenMSXSrcDir)\cpu;$(OpenMSXSrcDir)\debugger;$(OpenMSXSrcDir)\events;$(OpenMSXSrcDir)\fdc;$(OpenMSXSrcDir)\file;$(OpenMSXSrcDir)\ide;$(OpenMSXSrcDir)\imgui;$(OpenMSXSrcDir)\input;$(OpenMSXSrcDir)\laserdisc;$(OpenMSXSrcDir)\memory;$(OpenMSXSrcDir)\network;$(OpenMSXSrcDir)\resource;$(OpenMSXSrcDir)\security;$(OpenMSXSrcDir)\serial;$(OpenMSXSrcDir)\settings;$(OpenMSXSrcDir)\sound;$(OpenMSXSrcDir)\thread;$(OpenMSXSrcDir)\utils;$(OpenMSXSrcDir)\video;$(OpenMSXSrcDir)\video\scalers;$(OpenMSXSrcDir)\video\ld;$(OpenMSXSrcDir)\video\v9990;$(OpenMSXRootDir)\Contrib\catch2;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>wsock32.lib;ws2_32.lib;iphlpapi.lib;setupapi.lib;netapi32.lib;winmm.lib;imm32.lib;version.lib;secur32.lib;crypt32.lib;opengl32.lib;dxguid.lib;dsound.lib;SDL.lib;SDL_ttf.lib;freetype.lib;glew.lib;libogg.lib;libpng.lib;libtheora.lib;libvorbis.lib;tcl.lib;zlib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ThirdPartyOutDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <Manifest>
+      <AdditionalManifestFiles>ActiveCodePageUTF8.manifest %(AdditionalManifestFiles)</AdditionalManifestFiles>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;DEBUG;_DEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalOptions>/SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;_WIN64;__x86_64;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;DEBUG;_DEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX64</TargetMachine>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Developer|Win32'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;_DEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalOptions>/SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Developer|x64'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;_WIN64;__x86_64;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;_DEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX64</TargetMachine>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <Optimization>Full</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;NDEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX86</TargetMachine>
+      <AdditionalOptions>/SAFESEH:NO %(AdditionalOptions)</AdditionalOptions>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <Optimization>Full</Optimization>
+      <PreprocessorDefinitions>__SSE__;__SSE2__;WIN32;_WIN64;__x86_64;WIN32_LEAN_AND_MEAN;NOGDI;UNICODE;_UNICODE;SECURITY_WIN32;NDEBUG;_CONSOLE;_USE_MATH_DEFINES;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;NOMINMAX;GLEW_STATIC;STATIC_BUILD;UNITTEST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX64</TargetMachine>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\AdhocCliCommParser_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\AnalogInput_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\Base64_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\BitmapDecoderSettings_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\BitmapDecoder_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\BooleanInput_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\CRC16_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\CircularBuffer_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\ConsoleLine_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\Dasm_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\Date_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\DivMod_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\FileOperations_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\FilePoolCore_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\FixedPoint_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\GunstickSensor_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\HexDump_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\IterableBitSet_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\Keys_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\MappedFile_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\Math_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\MemoryBufferFile.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\MemoryBufferFile_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\MidiConvert_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\ObjectPool_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\SMSVDPCore_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\ScopedAssign_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\SimpleHashSet_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\StringOp_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\StringReplacer_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\SymbolManager_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\TclArgParser.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\TclObject_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\TigerTree_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\UnapiNetWire_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\VectorPathDsl_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\WavData_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\XMLEscape_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\XMLOutputStream_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\autocorrelation_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\circular_buffer_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\eeprom.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\endian_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\enumerate_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\escape_newline_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\fft_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\find_closest_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\fixed_capacity_bitset_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\gl_mat.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\gl_transform.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\gl_vec.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\join_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\main.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\monotonic_allocator_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\narrow_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\ranges_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\sha1.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\static_string_view_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\stl_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\strCat.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\subrange_between_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\timeline_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\view_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\xrange_test.cc" />
+    <ClCompile Include="$(OpenMSXSrcDir)\unittest\yin_test.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="openmsx.vcxproj">
+      <Project>{9563D96E-BBDC-410C-8BED-189102B0866F}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- The object files of openmsx exist only after that project is built, so
+       they are collected just before linking. -->
+  <Target Name="AddOpenMSXObjects" BeforeTargets="Link">
+    <ItemGroup>
+      <Link Include="$(OpenMSXIntDir)\*.obj" Exclude="$(OpenMSXIntDir)\main.obj" />
+    </ItemGroup>
+  </Target>
+</Project>

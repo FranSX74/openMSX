@@ -3,6 +3,7 @@
 #include "monotonic_allocator.hh"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <span>
 

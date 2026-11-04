@@ -207,8 +207,8 @@ TEST_CASE("subspan")
 	}
 	SECTION("from a class with begin/end methods") {
 		struct S {
-			const auto* begin() const { return a.begin(); }
-			const auto* end()   const { return a.end(); }
+			const auto* begin() const { return a.data(); }
+			const auto* end()   const { return a.data() + a.size(); }
 			std::array<int, 10> a;
 		} s;
 
