@@ -186,6 +186,19 @@ The ports are listed when the machine starts: a virtual port created later
 (for instance with [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html),
 to send the music to a sequencer) is only seen by a machine started after it.
 
+**On macOS** the ports are the CoreMIDI destinations, named like the device
+with ` OUT` at the end. macOS has no synthesizer that shows up as one, so start
+one first, for instance FluidSynth with a SoundFont:
+
+```
+fluidsynth -is -m coremidi -a coreaudio MySoundFont.sf2
+```
+
+```
+machine_info pluggable                     ;# look for "FluidSynth virtual port (...) OUT"
+plug MIDI-Tap-out "FluidSynth virtual port (1234) OUT"
+```
+
 `plug MIDI-Tap-out midi-out-logger` writes the raw MIDI bytes to the file of the
 setting `midi-out-logfilename` instead (useful to test, not to listen).
 The extension is in `share/extensions/MIDI_Tap.xml`; if you keep your own copy
@@ -228,15 +241,14 @@ Remember that `reverse goback` leaves the emulation paused (`set pause off`).
 The `midi-out-logger` does not reopen its file after a load, so it is not
 suitable to test this; a real MIDI port is.
 
-**Limitations.** Tested on Linux with ALSA (FluidSynth/QSynth) and on Windows
-(Microsoft GS Wavetable Synth, and loopMIDI to check the bytes). macOS uses the
-standard openMSX MIDI code but has not been tested; there the MIDI out port is
-not opened again after a loadstate or a reverse (it has to be plugged again).
-The notes are sent when the emulation produces them, so their timing follows
-the emulation, which runs in short bursts (on Windows the notes were measured
-within ±25 ms of their time). If a game plays
-digital samples, they are not in the MIDI. The SCC has no drum track (its
-percussion stays as notes).
+**Limitations.** Tested on Linux with ALSA (FluidSynth/QSynth), on Windows
+(Microsoft GS Wavetable Synth, and loopMIDI to check the bytes) and on macOS
+(CoreMIDI with FluidSynth; macOS has no built-in synthesizer that shows up as
+a MIDI out port, so you need one, e.g. FluidSynth with a SoundFont). The notes
+are sent when the emulation produces them, so their timing follows the
+emulation, which runs in short bursts (on Windows the notes were measured
+within ±25 ms of their time). If a game plays digital samples, they are not in
+the MIDI. The SCC has no drum track (its percussion stays as notes).
 
 ## Credits
 

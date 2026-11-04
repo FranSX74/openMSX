@@ -49,6 +49,10 @@ public:
 	void serialize(Archive& ar, unsigned version);
 
 private:
+	/** Create the CoreMIDI client and output port. Throws PlugException. */
+	void createClient();
+
+private:
 	MIDIClientRef client;
 	MIDIPortRef port;
 	MIDIEndpointRef endpoint;
@@ -77,6 +81,10 @@ public:
 
 	template<typename Archive>
 	void serialize(Archive& ar, unsigned version);
+
+private:
+	/** Create the CoreMIDI client and endpoint. Throws PlugException. */
+	void createClient();
 
 private:
 	MIDIClientRef client;

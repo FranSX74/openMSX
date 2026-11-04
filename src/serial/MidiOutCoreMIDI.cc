@@ -51,7 +51,9 @@ void MidiOutCoreMIDI::registerAll(PluggingController& controller)
 }
 
 MidiOutCoreMIDI::MidiOutCoreMIDI(MIDIEndpointRef endpoint_)
-	: endpoint(endpoint_)
+	: client(0)
+	, port(0)
+	, endpoint(endpoint_)
 {
 	// Get a user-presentable name for the endpoint.
 	CFStringRef midiDeviceName;
@@ -71,6 +73,11 @@ MidiOutCoreMIDI::MidiOutCoreMIDI(MIDIEndpointRef endpoint_)
 
 void MidiOutCoreMIDI::plugHelper(Connector& /*connector*/,
                                  EmuTime /*time*/)
+{
+	createClient();
+}
+
+void MidiOutCoreMIDI::createClient()
 {
 	// Create client.
 	if (OSStatus status = MIDIClientCreate(CFSTR("openMSX"), nullptr, nullptr, &client)) {
@@ -114,6 +121,12 @@ OSStatus MidiOutCoreMIDI::sendPacketList(MIDIPacketList *myPacketList)
 template<typename Archive>
 void MidiOutCoreMIDI::serialize(Archive& /*ar*/, unsigned /*version*/)
 {
+	// After a loadstate or a reverse the connector is plugged again without
+	// plugHelper(): create the client and the port here, as the ALSA and
+	// Windows MIDI out do.
+	if constexpr (Archive::IS_LOADER) {
+		createClient();
+	}
 }
 INSTANTIATE_SERIALIZE_METHODS(MidiOutCoreMIDI);
 REGISTER_POLYMORPHIC_INITIALIZER(Pluggable, MidiOutCoreMIDI, "MidiOutCoreMIDI");
@@ -129,6 +142,11 @@ MidiOutCoreMIDIVirtual:: MidiOutCoreMIDIVirtual()
 
 void MidiOutCoreMIDIVirtual::plugHelper(Connector& /*connector*/,
                                         EmuTime /*time*/)
+{
+	createClient();
+}
+
+void MidiOutCoreMIDIVirtual::createClient()
 {
 	// Create client.
 	if (OSStatus status = MIDIClientCreate(CFSTR("openMSX"), nullptr, nullptr, &client)) {
@@ -173,6 +191,10 @@ OSStatus MidiOutCoreMIDIVirtual::sendPacketList(MIDIPacketList *myPacketList)
 template<typename Archive>
 void MidiOutCoreMIDIVirtual::serialize(Archive& /*ar*/, unsigned /*version*/)
 {
+	// see MidiOutCoreMIDI::serialize()
+	if constexpr (Archive::IS_LOADER) {
+		createClient();
+	}
 }
 INSTANTIATE_SERIALIZE_METHODS(MidiOutCoreMIDIVirtual);
 REGISTER_POLYMORPHIC_INITIALIZER(Pluggable, MidiOutCoreMIDIVirtual, "MidiOutCoreMIDIVirtual");
