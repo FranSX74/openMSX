@@ -4,7 +4,7 @@
   <info>
     <name>MIDI Tap</name>
     <manufacturer>openMSX</manufacturer>
-    <description>Sends the music of the PSG to a MIDI out connector in real time.</description>
+    <description>Sends the music of the PSG, SCC and MSX-Music to a MIDI out connector in real time.</description>
     <type>MIDI cartridge</type>
   </info>
   <devices>

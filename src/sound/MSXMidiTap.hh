@@ -55,10 +55,18 @@ private:
 		/** Write the saved registers back. */
 		virtual void restore(const std::vector<uint8_t>& regs, double extra, float clock) = 0;
 
+		/** The chip has no MIDI channels yet: none of its voices played. */
+		[[nodiscard]] bool pending() const {
+			return !channels.empty() && channels[0] == PENDING;
+		}
+
 		unsigned id;
 		MidiRecorder::Chip kind;
 		std::vector<midi::Track> tracks;
-		std::vector<int> channels; // MIDI channel of every track, -1: none
+		std::vector<int> channels; // MIDI channel of every track, -1: none, PENDING: not yet
+		/** While pending: the last program, controllers and pitch bend of every
+		  * track, sent before its first note. */
+		std::vector<std::vector<midi::Event>> held;
 		midi::Track* drums = nullptr; // not in 'tracks' for the PSG and OPLL
 
 		/** Clean mode: the events of a track (the drums last) wait here to be
@@ -81,6 +89,8 @@ private:
 		std::vector<uint8_t> regs;
 	};
 	void restoreChip(const SavedChip& saved);
+	void restoreIfLoaded(EmuTime time);
+	void applyRestore();
 	/** Forget the conversion state and restart the output clock. */
 	void restartOutput(EmuTime time);
 	struct PsgState;
@@ -99,10 +109,15 @@ private:
 	/** The next free MIDI channel for a melodic voice (the drums have channel
 	  * 10), or -1 when all are used. */
 	[[nodiscard]] int allocateChannel();
+	/** A chip gets its channels when one of its voices plays the first note,
+	  * not at its first register write: a chip that is only initialized (at
+	  * reset, or by a game that does not use it) takes no channels. */
+	static constexpr int PENDING = -2;
 
 	void step(EmuTime time);
 	void flush(EmuTime time);
-	void sendEvents(midi::Track& track, int channel, EmuTime time);
+	/** An event of melodic track 'i' of 'chip'. */
+	void deliver(ChipState& chip, size_t i, const midi::Event& e, EmuTime time);
 	void sendEvent(const midi::Event& e, int channel, EmuTime time);
 	/** Clean mode. 'all': send everything that is waiting. */
 	void flushClean(EmuTime time, uint32_t now, bool all);
@@ -121,6 +136,9 @@ private:
 
 	MidiOutConnector outConnector;
 	std::vector<std::unique_ptr<ChipState>> chips;
+	std::vector<SavedChip> toRestore; // loaded, not applied yet
+	/** All the MIDI Taps, in the order they were created (see ~MSXMidiTap()). */
+	static inline std::vector<MSXMidiTap*> liveTaps;
 	int nextChannel = 0;
 	bool cleanActive = false;
 	EmuTime start;
