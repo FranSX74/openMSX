@@ -2,6 +2,7 @@
 
 #include "MSXMotherBoard.hh"
 
+#include "one_of.hh"
 #include "serialize.hh"
 
 #include <algorithm>
@@ -116,13 +117,21 @@ MSXMidiTap::MSXMidiTap(const DeviceConfig& config)
 {
 	getMotherBoard().getMidiRecorder().addListener(this);
 	syncStep.setSyncPoint(nextStep);
+	liveTaps.push_back(this);
 }
 
 MSXMidiTap::~MSXMidiTap()
 {
 	getMotherBoard().getMidiRecorder().removeListener(this);
-	// do not leave the synthesizer with sounding notes
-	allNotesOff(getCurrentTime());
+	// A loadstate or a reverse replaces the machine: the new one is created
+	// (and in a reverse it already played up to the target time) before this
+	// one is deleted. It silenced the synthesizer when it was loaded, so don't
+	// cut the notes it plays now. Otherwise do not leave the synthesizer with
+	// sounding notes.
+	auto it = std::ranges::find(liveTaps, this);
+	bool replaced = it != liveTaps.end() - 1;
+	liveTaps.erase(it);
+	if (!replaced) allNotesOff(getCurrentTime());
 }
 
 int MSXMidiTap::allocateChannel()
@@ -145,10 +154,11 @@ T* MSXMidiTap::find(unsigned id)
 void MSXMidiTap::psgWrite(unsigned id, unsigned reg, uint8_t value,
                           float clock, EmuTime time)
 {
+	restoreIfLoaded(time);
 	auto* psg = find<PsgState>(id);
 	if (!psg) {
 		std::array<int, 3> ch;
-		for (auto& c : ch) c = allocateChannel();
+		ch.fill(PENDING);
 		chips.push_back(std::make_unique<PsgState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::PSG)));
 		psg = static_cast<PsgState*>(chips.back().get());
 	}
@@ -156,24 +166,26 @@ void MSXMidiTap::psgWrite(unsigned id, unsigned reg, uint8_t value,
 	psg->converter.write(reg, value, (time - start).toDouble());
 }
 
-void MSXMidiTap::sccWrite(unsigned id, unsigned reg, uint8_t value, EmuTime /*time*/)
+void MSXMidiTap::sccWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time)
 {
+	restoreIfLoaded(time);
 	auto* scc = find<SccState>(id);
 	if (!scc) {
 		std::array<int, 5> ch;
-		for (auto& c : ch) c = allocateChannel();
+		ch.fill(PENDING);
 		chips.push_back(std::make_unique<SccState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::SCC)));
 		scc = static_cast<SccState*>(chips.back().get());
 	}
 	scc->converter.write(reg, value);
 }
 
-void MSXMidiTap::opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime /*time*/)
+void MSXMidiTap::opllWrite(unsigned id, unsigned reg, uint8_t value, EmuTime time)
 {
+	restoreIfLoaded(time);
 	auto* opll = find<OpllState>(id);
 	if (!opll) {
 		std::array<int, 9> ch;
-		for (auto& c : ch) c = allocateChannel();
+		ch.fill(PENDING);
 		chips.push_back(std::make_unique<OpllState>(id, ch, getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip::OPLL)));
 		opll = static_cast<OpllState*>(chips.back().get());
 	}
@@ -200,6 +212,7 @@ void MSXMidiTap::volumesChanged(EmuTime time)
 
 void MSXMidiTap::step(EmuTime time)
 {
+	if (!toRestore.empty()) applyRestore();
 	double g = (time - start).toDouble();
 	uint32_t tick = tickOf(time);
 	for (auto& chip : chips) chip->step(g, tick);
@@ -217,10 +230,52 @@ void MSXMidiTap::sendEvent(const Event& e, int channel, EmuTime time)
 	}
 }
 
-void MSXMidiTap::sendEvents(Track& track, int channel, EmuTime time)
+// Keep, of the events of a track without a channel yet, what decides how its
+// first note sounds: the last program, the last value of every controller and
+// the last pitch bend. The pitch bend range (RPN 0) is sent again as a whole.
+static void holdEvent(std::vector<Event>& held, const Event& e)
 {
-	for (const auto& e : track.events) sendEvent(e, channel, time);
-	track.events.clear();
+	uint8_t type = e.data[0] & 0xF0;
+	if (type == one_of(0x80, 0x90)) return; // notes off (a note on assigns the channel)
+	if (type == 0xB0 && e.data[1] == one_of(101, 100, 6, 38)) {
+		bool hasRpn = std::ranges::any_of(held, [](const Event& h) {
+			return (h.data[0] & 0xF0) == 0xB0 && h.data[1] == 101;
+		});
+		if (!hasRpn) {
+			for (uint8_t cc : {101, 100}) held.push_back({e.tick, {0xB0, cc, 0}, 3});
+			held.push_back({e.tick, {0xB0, 6, uint8_t(BEND_RANGE)}, 3});
+			held.push_back({e.tick, {0xB0, 38, 0}, 3});
+			for (uint8_t cc : {101, 100}) held.push_back({e.tick, {0xB0, cc, 127}, 3});
+		}
+		return;
+	}
+	auto same = [&](const Event& h) {
+		return (h.data[0] & 0xF0) == type && (type != 0xB0 || h.data[1] == e.data[1]);
+	};
+	if (auto it = std::ranges::find_if(held, same); it != held.end()) {
+		*it = e;
+	} else {
+		held.push_back(e);
+	}
+}
+
+void MSXMidiTap::deliver(ChipState& chip, size_t i, const Event& e, EmuTime time)
+{
+	if (chip.pending()) {
+		chip.held.resize(chip.tracks.size());
+		bool noteOn = (e.data[0] & 0xF0) == 0x90 && e.data[2] != 0;
+		if (!noteOn) {
+			holdEvent(chip.held[i], e);
+			return;
+		}
+		// first note of this chip: all its voices get their channels now
+		for (auto& c : chip.channels) c = allocateChannel();
+		for (size_t t = 0; t < chip.held.size(); ++t) {
+			for (const auto& h : chip.held[t]) sendEvent(h, chip.channels[t], time);
+		}
+		chip.held.clear();
+	}
+	sendEvent(e, chip.channels[i], time);
 }
 
 void MSXMidiTap::flushClean(EmuTime time, uint32_t now, bool all)
@@ -240,10 +295,13 @@ void MSXMidiTap::flushClean(EmuTime time, uint32_t now, bool all)
 			track.events.clear();
 			if (all) lane.cleaner.drain(lane.ready);
 			else lane.cleaner.process(now, lane.ready);
-			int channel = isDrums ? int(DRUM_CHANNEL) : chip->channels[i];
 			while (!lane.ready.empty() &&
 			       (all || lane.ready.front().tick + LIVE_LATENCY_TICKS <= now)) {
-				sendEvent(lane.ready.front(), channel, time);
+				if (isDrums) {
+					sendEvent(lane.ready.front(), int(DRUM_CHANNEL), time);
+				} else {
+					deliver(*chip, i, lane.ready.front(), time);
+				}
 				lane.ready.pop_front();
 			}
 		}
@@ -265,9 +323,14 @@ void MSXMidiTap::flush(EmuTime time)
 	}
 	for (auto& chip : chips) {
 		for (size_t i = 0; i < chip->tracks.size(); ++i) {
-			sendEvents(chip->tracks[i], chip->channels[i], time);
+			auto& track = chip->tracks[i];
+			for (const auto& e : track.events) deliver(*chip, i, e, time);
+			track.events.clear();
 		}
-		if (chip->drums) sendEvents(*chip->drums, int(DRUM_CHANNEL), time);
+		if (chip->drums) {
+			for (const auto& e : chip->drums->events) sendEvent(e, int(DRUM_CHANNEL), time);
+			chip->drums->events.clear();
+		}
 	}
 }
 
@@ -290,8 +353,9 @@ void MSXMidiTap::allNotesOff(EmuTime time)
 
 void MSXMidiTap::restartOutput(EmuTime time)
 {
-	// silence the synthesizer: what it was playing belongs to another moment
-	if (!chips.empty()) allNotesOff(time);
+	// silence the synthesizer: what it was playing (also the machine that this
+	// one replaces) belongs to another moment
+	allNotesOff(time);
 	chips.clear();
 	nextChannel = 0;
 	cleanActive = false;
@@ -320,6 +384,22 @@ void MSXMidiTap::SavedChip::serialize(Archive& ar, unsigned /*version*/)
 	             "extra", extra,
 	             "channels", channels,
 	             "regs", regs);
+}
+
+void MSXMidiTap::restoreIfLoaded(EmuTime time)
+{
+	// The chips that are created after this device when a state is loaded
+	// (in a later extension or cartridge) are reset then, which reports
+	// writes at the time of the snapshot; those must not change the loaded
+	// state. A write after that time is the MSX running again.
+	if (!toRestore.empty() && time > start) applyRestore();
+}
+
+void MSXMidiTap::applyRestore()
+{
+	chips.clear(); // what the resets of the loading created
+	for (const auto& s : toRestore) restoreChip(s);
+	toRestore.clear();
 }
 
 void MSXMidiTap::restoreChip(const SavedChip& saved)
@@ -381,8 +461,11 @@ void MSXMidiTap::serialize(Archive& ar, unsigned version)
 	             "chips", saved,
 	             "nextChannel", nextChannel);
 	if constexpr (Archive::IS_LOADER) {
+		int loadedNextChannel = nextChannel;
 		restartOutput(snapshotTime);
-		for (const auto& s : saved) restoreChip(s);
+		nextChannel = loadedNextChannel;
+		// applied when all the devices of the machine exist, see restoreIfLoaded()
+		toRestore = std::move(saved);
 	}
 }
 INSTANTIATE_SERIALIZE_METHODS(MSXMidiTap);

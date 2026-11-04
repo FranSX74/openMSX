@@ -172,16 +172,32 @@ set master_volume 0                        ;# optional: mute openMSX, hear only 
 midi_record live clean                     ;# optional: cleaner output (see below)
 ```
 
+**On Windows** the MIDI ports are called `midi-out` (the MIDI mapper),
+`midi-out-0`, `midi-out-1`... in the order Windows lists them; the description
+of each one is the name of the device (with `_` instead of spaces). To hear it
+on the synthesizer that comes with Windows:
+
+```
+machine_info pluggable midi-out-0            ;# Microsoft_GS_Wavetable_Synth
+plug MIDI-Tap-out midi-out-0
+```
+
+The ports are listed when the machine starts: a virtual port created later
+(for instance with [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html),
+to send the music to a sequencer) is only seen by a machine started after it.
+
 `plug MIDI-Tap-out midi-out-logger` writes the raw MIDI bytes to the file of the
 setting `midi-out-logfilename` instead (useful to test, not to listen).
 The extension is in `share/extensions/MIDI_Tap.xml`; if you keep your own copy
 of the openMSX extensions in `~/.openMSX/share/extensions`, copy it there too.
 
-**Which MIDI channel is what.** The voices get the channels in the order the
-chips are first used, skipping channel 10, which is always the drums (PSG noise
-and the MSX-Music rhythm). Example: a game with PSG and SCC uses channels 1-3 for
-the PSG, 4-8 for the SCC, and 10 for the drums. Voices beyond 15 are not sent.
-Each channel gets its program, pan and volume when it is opened.
+**Which MIDI channel is what.** Each chip gets a block of channels (one per
+voice) when one of its voices plays its first note, skipping channel 10, which
+is always the drums (PSG noise and the MSX-Music rhythm). A chip that is only
+initialized (at reset, or by a game that does not use it) gets no channels.
+Example: a game with PSG and SCC uses channels 1-3 for the PSG, 4-8 for the
+SCC, and 10 for the drums. Voices beyond 15 are not sent. Each channel gets its
+program, pan and volume when it is opened.
 
 **Two modes** (`midi_record live raw|clean`):
 
@@ -212,10 +228,15 @@ Remember that `reverse goback` leaves the emulation paused (`set pause off`).
 The `midi-out-logger` does not reopen its file after a load, so it is not
 suitable to test this; a real MIDI port is.
 
-**Limitations.** Tested on Linux with ALSA (FluidSynth/QSynth). The MIDI ports
-of Windows and macOS use the standard openMSX MIDI code, but I have not tested
-them. If a game plays digital samples, they are not in the MIDI. The SCC has no
-drum track (its percussion stays as notes).
+**Limitations.** Tested on Linux with ALSA (FluidSynth/QSynth) and on Windows
+(Microsoft GS Wavetable Synth, and loopMIDI to check the bytes). macOS uses the
+standard openMSX MIDI code but has not been tested; there the MIDI out port is
+not opened again after a loadstate or a reverse (it has to be plugged again).
+The notes are sent when the emulation produces them, so their timing follows
+the emulation, which runs in short bursts (on Windows the notes were measured
+within ±25 ms of their time). If a game plays
+digital samples, they are not in the MIDI. The SCC has no drum track (its
+percussion stays as notes).
 
 ## Credits
 
