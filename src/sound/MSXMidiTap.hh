@@ -47,6 +47,13 @@ private:
 		virtual ~ChipState() = default;
 		virtual void step(double g, uint32_t tick) = 0;
 		virtual void finish(uint32_t tick) = 0;
+		/** The register state (see PsgConverter::registers()). */
+		[[nodiscard]] virtual std::vector<uint8_t> registers() const = 0;
+		/** Chip dependent: the PSG envelope start, relative to 'g'. */
+		[[nodiscard]] virtual double extra(double /*g*/) const { return 0.0; }
+		virtual float getClock() const { return 0.0f; }
+		/** Write the saved registers back. */
+		virtual void restore(const std::vector<uint8_t>& regs, double extra, float clock) = 0;
 
 		unsigned id;
 		MidiRecorder::Chip kind;
@@ -63,6 +70,19 @@ private:
 		};
 		std::vector<Lane> lanes;
 	};
+	/** What is saved of a chip. */
+	struct SavedChip {
+		template<typename Archive> void serialize(Archive& ar, unsigned version);
+		unsigned id = 0;
+		uint8_t kind = 0;
+		float clock = 0.0f;
+		double extra = 0.0;
+		std::vector<int> channels;
+		std::vector<uint8_t> regs;
+	};
+	void restoreChip(const SavedChip& saved);
+	/** Forget the conversion state and restart the output clock. */
+	void restartOutput();
 	struct PsgState;
 	struct SccState;
 	struct OpllState;

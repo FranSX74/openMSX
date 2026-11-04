@@ -256,6 +256,11 @@ public:
 	/** Release all sounding notes. */
 	void finish(uint32_t tick, const std::array<Track*, 3>& tones, Track& drums);
 
+	/** The register state, e.g. for a savestate: restore it by writing the
+	  * registers again (the envelope start time with the given time). */
+	[[nodiscard]] const std::array<uint8_t, 16>& registers() const { return regs; }
+	[[nodiscard]] double envelopeStart() const { return envStart; }
+
 private:
 	std::array<uint8_t, 16> regs = {};
 	double envStart = 0.0;
@@ -368,6 +373,8 @@ public:
 	void step(uint32_t tick, float clock, const std::array<Track*, 5>& tones);
 	void finish(uint32_t tick, const std::array<Track*, 5>& tones);
 
+	[[nodiscard]] const std::array<uint8_t, 256>& registers() const { return regs; }
+
 private:
 	std::array<uint8_t, 256> regs = {};
 	std::array<bool, 5> dirty;
@@ -386,6 +393,8 @@ public:
 	void write(unsigned reg, uint8_t value);
 	void step(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
 	void finish(uint32_t tick, const std::array<Track*, 9>& tones, Track& drumTrack);
+
+	[[nodiscard]] const std::array<uint8_t, 64>& registers() const { return regs; }
 
 private:
 	std::array<uint8_t, 64> regs = {};

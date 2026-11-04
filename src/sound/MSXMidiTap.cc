@@ -32,6 +32,18 @@ struct MSXMidiTap::PsgState final : ChipState {
 	void finish(uint32_t tick) override {
 		converter.finish(tick, {&tracks[0], &tracks[1], &tracks[2]}, *drums);
 	}
+	std::vector<uint8_t> registers() const override {
+		const auto& r = converter.registers();
+		return {r.begin(), r.end()};
+	}
+	double extra(double g) const override { return converter.envelopeStart() - g; }
+	float getClock() const override { return clock; }
+	void restore(const std::vector<uint8_t>& regs, double envOffset, float clk) override {
+		clock = clk;
+		for (unsigned r = 0; r < regs.size() && r < 16; ++r) {
+			converter.write(r, regs[r], envOffset);
+		}
+	}
 	PsgConverter converter;
 	float clock = 1789772.0f;
 	Track noise;
@@ -51,6 +63,17 @@ struct MSXMidiTap::SccState final : ChipState {
 	}
 	void step(double /*g*/, uint32_t tick) override { converter.step(tick, float(SCC_CLOCK), ptrs()); }
 	void finish(uint32_t tick) override { converter.finish(tick, ptrs()); }
+	std::vector<uint8_t> registers() const override {
+		const auto& r = converter.registers();
+		return {r.begin(), r.end()};
+	}
+	void restore(const std::vector<uint8_t>& regs, double, float) override {
+		// the deformation register first: it decides how the frequencies count
+		if (regs.size() > 0xB0) converter.write(0xB0, regs[0xB0]);
+		for (unsigned r = 0; r < regs.size() && r < 256; ++r) {
+			if (r != 0xB0) converter.write(r, regs[r]);
+		}
+	}
 	SccConverter converter;
 };
 
@@ -71,6 +94,13 @@ struct MSXMidiTap::OpllState final : ChipState {
 	}
 	void step(double /*g*/, uint32_t tick) override { converter.step(tick, ptrs(), *drums); }
 	void finish(uint32_t tick) override { converter.finish(tick, ptrs(), *drums); }
+	std::vector<uint8_t> registers() const override {
+		const auto& r = converter.registers();
+		return {r.begin(), r.end()};
+	}
+	void restore(const std::vector<uint8_t>& regs, double, float) override {
+		for (unsigned r = 0; r < regs.size() && r < 64; ++r) converter.write(r, regs[r]);
+	}
 	OpllConverter converter;
 	Track noise;
 };
@@ -258,6 +288,19 @@ void MSXMidiTap::allNotesOff(EmuTime time)
 	}
 }
 
+void MSXMidiTap::restartOutput()
+{
+	// silence the synthesizer: what it was playing belongs to another moment
+	if (!chips.empty()) allNotesOff(getCurrentTime());
+	chips.clear();
+	nextChannel = 0;
+	cleanActive = false;
+	start = getCurrentTime();
+	nextStep = start;
+	syncStep.removeSyncPoints();
+	syncStep.setSyncPoint(nextStep);
+}
+
 void MSXMidiTap::powerDown(EmuTime time)
 {
 	allNotesOff(time);
@@ -269,21 +312,77 @@ void MSXMidiTap::reset(EmuTime time)
 }
 
 template<typename Archive>
-void MSXMidiTap::serialize(Archive& ar, unsigned /*version*/)
+void MSXMidiTap::SavedChip::serialize(Archive& ar, unsigned /*version*/)
+{
+	ar.serialize("id", id,
+	             "kind", kind,
+	             "clock", clock,
+	             "extra", extra,
+	             "channels", channels,
+	             "regs", regs);
+}
+
+void MSXMidiTap::restoreChip(const SavedChip& saved)
+{
+	auto volume = getMotherBoard().getMidiRecorder().getVolume(MidiRecorder::Chip(saved.kind));
+	auto channel = [&](size_t i) { return i < saved.channels.size() ? saved.channels[i] : -1; };
+	std::unique_ptr<ChipState> chip;
+	switch (MidiRecorder::Chip(saved.kind)) {
+	case MidiRecorder::Chip::PSG:
+		chip = std::make_unique<PsgState>(saved.id, std::array<int, 3>{channel(0), channel(1), channel(2)}, volume);
+		break;
+	case MidiRecorder::Chip::SCC:
+		chip = std::make_unique<SccState>(saved.id, std::array<int, 5>{channel(0), channel(1), channel(2), channel(3), channel(4)}, volume);
+		break;
+	case MidiRecorder::Chip::OPLL: {
+		std::array<int, 9> ch;
+		for (size_t i = 0; i < 9; ++i) ch[i] = channel(i);
+		chip = std::make_unique<OpllState>(saved.id, ch, volume);
+		break;
+	}
+	default:
+		return;
+	}
+	chip->restore(saved.regs, saved.extra, saved.clock);
+	chips.push_back(std::move(chip));
+}
+
+template<typename Archive>
+void MSXMidiTap::serialize(Archive& ar, unsigned version)
 {
 	ar.template serializeBase<MSXDevice>(*this);
-	// The conversion state is not saved: after loading a state the notes
-	// start again with the next register write.
+	if (version < 2) {
+		// no conversion state in these: start again with the next register write
+		if constexpr (Archive::IS_LOADER) restartOutput();
+		return;
+	}
+	// What is saved: the registers of the chips and the MIDI channels they
+	// use. The notes that sound are not: after loading, the synthesizer is
+	// silenced and every voice that should sound starts a new note.
+	std::vector<SavedChip> saved;
+	if constexpr (!Archive::IS_LOADER) {
+		double g = (getCurrentTime() - start).toDouble();
+		for (const auto& chip : chips) {
+			SavedChip s;
+			s.id = chip->id;
+			s.kind = uint8_t(chip->kind);
+			s.clock = chip->getClock();
+			s.extra = chip->extra(g);
+			s.channels = chip->channels;
+			auto regs = chip->registers();
+			s.regs.assign(regs.begin(), regs.end());
+			saved.push_back(std::move(s));
+		}
+	}
+	ar.serialize("chips", saved,
+	             "nextChannel", nextChannel);
 	if constexpr (Archive::IS_LOADER) {
-		chips.clear();
-		nextChannel = 0;
-		start = getCurrentTime();
-		nextStep = start;
-		syncStep.removeSyncPoints();
-		syncStep.setSyncPoint(nextStep);
+		restartOutput();
+		for (const auto& s : saved) restoreChip(s);
 	}
 }
 INSTANTIATE_SERIALIZE_METHODS(MSXMidiTap);
+SERIALIZE_CLASS_VERSION(MSXMidiTap, 2);
 REGISTER_MSXDEVICE(MSXMidiTap, "MidiTap");
 
 } // namespace openmsx
