@@ -1,0 +1,148 @@
+# MIDI export
+
+openMSX can record what the PSG, the SCC and the MSX-Music play and save it as a Standard MIDI File, one track per chip channel, with the `midi_record` command.
+
+## What it does
+
+While recording, openMSX logs every write to the sound chip registers together
+with its exact emulation time. When you stop, the log is converted to MIDI. The
+conversion is done offline, so it can look ahead and clean up the result.
+
+| Chip | Channels | MIDI result |
+|---|---|---|
+| PSG (AY-3-8910 / YM2149) | 3 tone + noise | 3 melodic tracks, noise as GM percussion |
+| SCC / SCC+ (Konami) | 5 | 5 melodic tracks, GM program chosen from the wave form |
+| MSX-Music (YM2413 / OPLL) | 9 (or 6 + 5 rhythm) | 9 melodic tracks + a rhythm track as GM percussion |
+
+## Using it
+
+**Console / script**
+
+```
+midi_record start              ;# automatic name: ~/.openMSX/midi/openmsx0001.mid
+midi_record start my_song.mid  ;# explicit name (relative names go in the midi folder)
+midi_record stop               ;# stop and write the file(s)
+midi_record toggle             ;# start (automatic name) or stop
+midi_record status
+midi_record detail full|simple ;# full (default): as the chips; simple: fewer, longer notes
+midi_record percussion on|off  ;# detect falling-tone drums and write them as drum hits (off)
+midi_record arpeggio on|off    ;# arpeggios as chords (default) or as fast notes
+```
+
+**GUI:** *Tools → Capture → MIDI (PSG)...* opens a small window with a name
+field, Start/Stop and "Open MIDI folder". If the file exists you are asked
+before overwriting.
+
+**Key binding:** `ALT+F6` runs `midi_record toggle`. It is defined in the new
+script `share/scripts/midi_record.tcl`. If you keep your own copy of the openMSX
+scripts in `~/.openMSX/share/scripts`, copy that file there too.
+
+Tip: start the recording a bit before the music begins, and stop after it
+ends. Many games take several seconds before the music starts.
+
+## Output files
+
+A Standard MIDI File, **format 1**, 500 ticks per quarter note at 120 bpm
+(exactly 1 ms per tick).
+
+- Track 0: tempo / time signature.
+- One track per chip channel that was actually used: `PSG A`, `PSG B`, `PSG C`,
+  `SCC 1`...`SCC 5`, `MSX-Music 1`...`MSX-Music 9`.
+- `PSG noise` and `MSX-Music rhythm`: separate tracks, both on the General MIDI
+  percussion channel (10).
+- MIDI channels are assigned at the end, only to voices that played, skipping
+  channel 10. The order is always PSG, SCC, MSX-Music.
+- If more than 15 melodic voices were used, the output is **split in two
+  files**: `name.mid` (PSG + SCC) and `name-msxmusic.mid` (MSX-Music).
+- Silent tracks are not written.
+
+## How the conversion works
+
+The chip state is sampled every 5 ms from the logged register writes.
+
+- **Pitch** is computed from the chip's real period/frequency registers
+  and clock. The nearest MIDI note is played, the fraction goes to **pitch
+  bend** (range ±2 semitones, configured with RPN 0).
+- **Vibrato and slides**: a deviation of up to 0.75 semitones from the sounding
+  note is only pitch bend, never a new note.
+- **Note changes** within ±2 semitones must be stable for 60 ms before they
+  become a new note; bigger jumps (arpeggios, sound effects) are immediate.
+- **Volume** becomes CC#11 (expression) and note-on velocity.
+- **PSG hardware envelope** is evaluated exactly (all 16 shapes). Very fast
+  repeating envelopes are rendered with a constant volume. When the tone and
+  noise are off, the envelope repetition rate is the pitch (buzzer bass) and
+  it is written as a Synth Bass note.
+- **Repeated notes:** when the volume of a sounding voice jumps up by 4 or more
+  levels (out of 15) the game is attacking the same note again, so a new note
+  is written instead of a volume change.
+  The same goes for a flutter: a game that alternates the volume every frame
+  (down 2+ levels, up 2+ levels) is heard as very fast repeated notes, and
+  that is what is written.
+- **Pitch-drop drums** (optional, off by default): many games make a snare or
+  bass drum with a tone that falls fast (3+ notes of at most 40 ms, dropping 6+
+  semitones), on the PSG and on the SCC (which then gets a *drums* track). With `midi_record percussion on` (or the *Detect percussion*
+  checkbox) they are written as a drum hit on the drum channel (snare if the run
+  starts at note 55 or higher, bass drum below) instead of melody notes.
+  Arpeggios are converted to chords first. The guess can be wrong, which is why
+  it is optional. In `simple` detail, with this off, those short notes are
+  dropped like any note under 60 ms.
+- **SCC deformation register:** the 4-bit and 8-bit frequency modes change the
+  pitch the chip really plays, and are followed (including a read of the
+  register, which acts as a write of 0xFF). The wave rotation modes cannot be
+  represented in MIDI and are ignored.
+- **Glitches:** notes shorter than 10 ms are dropped. The chips are updated
+  at most every 20 ms, so those come from reading a period between the writes
+  of its two bytes.
+- **Detail.** `full` (default) writes everything above. `simple` is meant for
+  tracks that are easier to read and edit: no repeated notes from volume
+  attacks or flutter (the volume stays a volume change), no pitch bend, no
+  notes shorter than 60 ms, and arpeggios are always chords. It is also a
+  selector in the *Capture MIDI* window.
+- **Arpeggios** (runs of at most 60 ms notes cycling through 2-4 pitches: at least
+  4 notes for 2 pitches, and always two full cycles) are written as one sustained chord, because a chip voice that
+  cycles through a chord every frame is heard as that chord. Slow patterns and
+  sweeps are left alone. `midi_record arpeggio off` writes every note instead.
+- **PSG noise** becomes GM drums in 6 bands (hi-hats, snare, toms, bass drum).
+- **MSX-Music**: the 15 built-in instruments are mapped to General MIDI
+  programs, key-on edges are tracked so a quick off/on of the same note is a new
+  note, and the rhythm mode drums go to the percussion channel.
+  The pitch that is heard is not always the F-number frequency: the spectrum of
+  the two operators consists of multiples of the greatest common divisor of
+  their MULT values, so the synthesizer bass sounds an octave lower. This is
+  applied to the built-in instruments and to the user patch (a user patch with a
+  very quiet modulator takes the pitch of the carrier alone).
+- **SCC**: the 32-sample wave form is analysed (square, saw, sine/triangle,
+  other) to pick a GM program. The volume is scaled by the wave amplitude.
+  The three SCC modes (real, compatible, SCC+) are handled.
+
+## Known limitations
+
+- The built-in vibrato of the YM2413 is not visible in the registers, so it is
+  not in the MIDI. The user-defined patch of the YM2413 plays as Square Lead (it
+  is used by games for sound effects).
+- The rotation modes of the SCC deformation register cannot be written in MIDI
+  and are ignored.
+- The YM2413 rhythm "snare" is a General MIDI snare, even if a game uses it as a
+  quiet hi-hat. The instruments of the MSX-Music are respected on purpose.
+- PSG tones driven faster than the 5 ms grid (some digital effects) are lost.
+- Only one machine is recorded at a time (the current one).
+- It records what is *written to the chips*, not the final mix: it does not
+  work for samples (PCM / DAC tricks), only for the FM/PSG/SCC voices.
+
+## Playing the files
+
+Any General MIDI player works. On Linux, for instance:
+
+```
+fluidsynth -a pipewire /usr/share/soundfonts/FluidR3_GM.sf2 song.mid
+```
+
+Good editors to inspect the tracks: Rosegarden, MuseScore, Ardour, LMMS.
+
+## Credits
+
+The idea comes from the MIDI export of fMSX (Marat Fayzullin). The conversion
+rules (vibrato as pitch bend, stability filter before changing note, noise bands
+to drums) were inspired by the *MIDI-PAC* firmware of the
+[MSX PicoVerse](https://github.com/cristianoag/msx-picoverse-public) project.
+No code was copied from either project.

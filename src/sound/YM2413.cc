@@ -7,6 +7,8 @@
 
 #include "DeviceConfig.hh"
 #include "MSXException.hh"
+#include "MSXMotherBoard.hh"
+#include "MidiRecorder.hh"
 #include "serialize.hh"
 
 #include "cstd.hh"
@@ -70,6 +72,8 @@ static constexpr auto INPUT_RATE = unsigned(cstd::round(YM2413Core::CLOCK_FREQ /
 YM2413::YM2413(const std::string& name_, const DeviceConfig& config)
 	: ResampledSoundDevice(config.getMotherBoard(), name_, "MSX-MUSIC", 9 + 5, INPUT_RATE, false)
 	, core(createCore(config))
+	, midiRecorder(config.getMotherBoard().getMidiRecorder())
+	, midiRecorderId(midiRecorder.registerChip(MidiRecorder::Chip::OPLL))
 	, debuggable(config.getMotherBoard(), getName())
 {
 	registerSound(config);
@@ -84,11 +88,13 @@ void YM2413::reset(EmuTime time)
 {
 	updateStream(time);
 	core->reset();
+	midiRecorder.opllReset(midiRecorderId, time);
 }
 
 void YM2413::writePort(bool port, uint8_t value, EmuTime time)
 {
 	updateStream(time);
+	midiRecorder.opllWritePort(midiRecorderId, port, value, time);
 
 	auto [integral, fractional] = getEmuClock().getTicksTillAsIntFloat(time);
 	auto offset = narrow_cast<int>(18 * fractional);
@@ -102,6 +108,7 @@ void YM2413::writePort(bool port, uint8_t value, EmuTime time)
 void YM2413::pokeReg(uint8_t reg, uint8_t value, EmuTime time)
 {
 	updateStream(time);
+	midiRecorder.opllWriteReg(midiRecorderId, reg, value, time);
 	core->pokeReg(reg, value);
 }
 

@@ -48,6 +48,7 @@ class MSXDeviceSwitch;
 class MSXEventDistributor;
 class MSXMapperIO;
 class MSXMixer;
+class MidiRecorder;
 class PanasonicMemory;
 class PluggingController;
 class Reactor;
@@ -168,6 +169,7 @@ public:
 	[[nodiscard]] RealTime& getRealTime() { return *realTime; }
 	[[nodiscard]] Debugger& getDebugger() { return *debugger; }
 	[[nodiscard]] MSXMixer& getMSXMixer() { return *msxMixer; }
+	[[nodiscard]] MidiRecorder& getMidiRecorder() { return *midiRecorder; }
 	[[nodiscard]] PluggingController& getPluggingController();
 	[[nodiscard]] MSXCPU& getCPU();
 	[[nodiscard]] MSXCPUInterface& getCPUInterface();
@@ -309,6 +311,7 @@ private:
 	std::unique_ptr<RealTime> realTime;
 	std::unique_ptr<Debugger> debugger;
 	std::unique_ptr<MSXMixer> msxMixer;
+	std::unique_ptr<MidiRecorder> midiRecorder;
 	// machineMediaInfo must be BEFORE PluggingController!
 	std::vector<MediaProviderInfo> mediaProviders; // unsorted, there will only be a few
 	std::unique_ptr<MachineMediaInfo> machineMediaInfo;
