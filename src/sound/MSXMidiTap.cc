@@ -288,15 +288,15 @@ void MSXMidiTap::allNotesOff(EmuTime time)
 	}
 }
 
-void MSXMidiTap::restartOutput()
+void MSXMidiTap::restartOutput(EmuTime time)
 {
 	// silence the synthesizer: what it was playing belongs to another moment
-	if (!chips.empty()) allNotesOff(getCurrentTime());
+	if (!chips.empty()) allNotesOff(time);
 	chips.clear();
 	nextChannel = 0;
 	cleanActive = false;
-	start = getCurrentTime();
-	nextStep = start;
+	start = time;
+	nextStep = time;
 	syncStep.removeSyncPoints();
 	syncStep.setSyncPoint(nextStep);
 }
@@ -353,7 +353,7 @@ void MSXMidiTap::serialize(Archive& ar, unsigned version)
 	ar.template serializeBase<MSXDevice>(*this);
 	if (version < 2) {
 		// no conversion state in these: start again with the next register write
-		if constexpr (Archive::IS_LOADER) restartOutput();
+		if constexpr (Archive::IS_LOADER) restartOutput(getCurrentTime());
 		return;
 	}
 	// What is saved: the registers of the chips and the MIDI channels they
@@ -374,10 +374,14 @@ void MSXMidiTap::serialize(Archive& ar, unsigned version)
 			saved.push_back(std::move(s));
 		}
 	}
-	ar.serialize("chips", saved,
+	// the emulated time of the snapshot: the output clock continues from it
+	EmuTime snapshotTime = getCurrentTime();
+	ar.serialize("outConnector", outConnector,
+	             "time", snapshotTime,
+	             "chips", saved,
 	             "nextChannel", nextChannel);
 	if constexpr (Archive::IS_LOADER) {
-		restartOutput();
+		restartOutput(snapshotTime);
 		for (const auto& s : saved) restoreChip(s);
 	}
 }

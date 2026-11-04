@@ -82,7 +82,7 @@ private:
 	};
 	void restoreChip(const SavedChip& saved);
 	/** Forget the conversion state and restart the output clock. */
-	void restartOutput();
+	void restartOutput(EmuTime time);
 	struct PsgState;
 	struct SccState;
 	struct OpllState;
