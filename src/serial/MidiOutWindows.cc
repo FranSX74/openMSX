@@ -69,7 +69,16 @@ void MidiOutWindows::recvMessage(const std::vector<uint8_t>& message, EmuTime /*
 template<typename Archive>
 void MidiOutWindows::serialize(Archive& /*ar*/, unsigned /*version*/)
 {
-	// don't restore this after loadstate
+	// Nothing is saved, but after a loadstate (or a reverse) the connector
+	// is plugged again without plugHelper(): open the device here, as
+	// MidiOutALSA does. The old machine may still have it open, see
+	// w32_midiOutOpen().
+	if constexpr (Archive::IS_LOADER) {
+		devIdx = w32_midiOutOpen(name.c_str());
+		if (devIdx == unsigned(-1)) {
+			throw PlugException("Failed to open " + name);
+		}
+	}
 }
 INSTANTIATE_SERIALIZE_METHODS(MidiOutWindows);
 REGISTER_POLYMORPHIC_INITIALIZER(Pluggable, MidiOutWindows, "MidiOutWindows");

@@ -57,6 +57,11 @@ struct vfn_midi {
 	unsigned idx;
 	unsigned devid;
 	HMIDI    handle;
+	// MIDI out: number of pluggables that have the device open. They share
+	// 'handle': during a loadstate or a reverse the new machine opens the
+	// device before the old one closes it, and some devices (e.g. Microsoft GS
+	// Wavetable Synth) cannot be opened twice.
+	unsigned openCount;
 	std::array<char, MAXPATHLEN + 1> vfname;
 	std::array<char, MAXPNAMELEN> devname;
 };
@@ -109,6 +114,11 @@ static int w32_midiOutFindDev(unsigned *idx, unsigned *dev, const char *vfn)
 
 int w32_midiOutInit()
 {
+	// This runs for every new machine. While a device is open (by another
+	// machine, e.g. the one being replaced by a loadstate) keep the table.
+	for (auto i : xrange(vfnt_midiout_num)) {
+		if (vfnt_midiout[i].openCount) return 0;
+	}
 	vfnt_midiout_num = 0;
 	unsigned num = midiOutGetNumDevs();
 	if (!num) return 0;
@@ -128,6 +138,7 @@ int w32_midiOutInit()
 		return 2;
 	}
 	vfnt_midiout[0].devid = OPENMSX_MIDI_MAPPER;
+	vfnt_midiout[0].openCount = 0;
 	w32_midiDevNameConv(vfnt_midiout[0].devname.data(), cap.szPname);
 	strncpy(vfnt_midiout[0].vfname.data(), "midi-out", MAXPATHLEN);
 	vfnt_midiout[0].vfname[MAXPATHLEN] = '\0';
@@ -138,6 +149,7 @@ int w32_midiOutInit()
 			return 0; // atleast MIDI-MAPPER is available...
 		}
 		vfnt_midiout[i + 1].devid = i;
+		vfnt_midiout[i + 1].openCount = 0;
 		w32_midiDevNameConv(vfnt_midiout[i + 1].devname.data(), cap.szPname);
 		snprintf(vfnt_midiout[i + 1].vfname.data(), MAXPATHLEN + 1, "midi-out-%u", i);
 		vfnt_midiout_num++;
@@ -175,14 +187,18 @@ unsigned w32_midiOutOpen(const char *vfn)
 	if (w32_midiOutFindDev(&idx, &devid,vfn)) {
 		return unsigned(-1);
 	}
-	if (midiOutOpen(std::bit_cast<HMIDIOUT*>(&vfnt_midiout[idx].handle), devid, 0, 0 ,0) != MMSYSERR_NOERROR) {
+	if (vfnt_midiout[idx].openCount == 0 &&
+	    midiOutOpen(std::bit_cast<HMIDIOUT*>(&vfnt_midiout[idx].handle), devid, 0, 0 ,0) != MMSYSERR_NOERROR) {
 		return unsigned(-1);
 	}
+	++vfnt_midiout[idx].openCount;
 	return idx;
 }
 
 int w32_midiOutClose(unsigned idx)
 {
+	assert(vfnt_midiout[idx].openCount > 0);
+	if (--vfnt_midiout[idx].openCount > 0) return 0; // still used by another pluggable
 	midiOutReset(reinterpret_cast<HMIDIOUT>(vfnt_midiout[idx].handle));
 	if (midiOutClose(reinterpret_cast<HMIDIOUT>(vfnt_midiout[idx].handle)) == MMSYSERR_NOERROR) {
 		return 0;
