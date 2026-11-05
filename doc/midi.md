@@ -1,6 +1,6 @@
-# MIDI export and MIDI Tap
+# MIDI export, MIDI Tap and built-in synthesizer
 
-openMSX can turn what the PSG, the SCC and the MSX-Music play into MIDI in two ways: it can record the music into a Standard MIDI File (the `midi_record` command), and it can send it to a synthesizer or a MIDI program while the game runs (the `MIDI_Tap` extension).
+openMSX can turn what the PSG, the SCC and the MSX-Music play into MIDI in two ways: it can record the music into a Standard MIDI File (the `midi_record` command), and it can send it to a synthesizer or a MIDI program while the game runs (the `MIDI_Tap` extension). A built-in synthesizer (`midi-out-synth`) can play that MIDI inside openMSX, so no external synthesizer is needed.
 
 ## What it does
 
@@ -249,6 +249,43 @@ are sent when the emulation produces them, so their timing follows the
 emulation, which runs in short bursts (on Windows the notes were measured
 within ±25 ms of their time). If a game plays digital samples, they are not in
 the MIDI. The SCC has no drum track (its percussion stays as notes).
+
+## Built-in synthesizer (midi-out-synth)
+
+You do not need an external synthesizer to hear the MIDI. openMSX has a MIDI
+out device that plays it with a SoundFont (an `.sf2` file) and mixes the result
+with the rest of the sound of the emulated machine:
+
+```
+set midi-out-synth-soundfont ~/Music/SF2/GeneralUser-GS.sf2
+plug MIDI-Tap-out midi-out-synth
+```
+
+It is a MIDI out device like the ones for ALSA, CoreMIDI or Windows, so it can
+be plugged into any MIDI out connector: the `MIDI-Tap-out` of the MIDI Tap, or
+the one of an MSX-MIDI cartridge. The MIDI messages act at their exact emulation
+time, so the music stays in sync with the machine (also with `reverse`, which
+loads the SoundFont again). The notes that sound are not saved in a savestate:
+after a load the synthesizer starts silent and the notes begin again.
+
+Things to know:
+
+- **The SoundFont** is not included. A small General MIDI / GS one works well:
+  [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) (about 30 MB;
+  see its license). Any `.sf2` file can be used. The file is read when the
+  device is plugged.
+- **Volume.** The synthesizer is a sound device of the mixer, called
+  `MIDI-synth`: its volume is the setting `MIDI-synth_volume`, and its sound can
+  be recorded or muted like the other devices. To hear only the synthesizer and
+  not the original PSG, set `PSG_volume 0`.
+- **What is supported.** Notes, program and bank select, volume, pan,
+  expression, sustain, pitch bend and its range, all sound off / all notes off
+  and "General MIDI System On". Channel 10 plays the drum kits. It has no reverb
+  or chorus, and no SoundFont modulators (the instruments sound a bit drier than
+  in a full synthesizer such as FluidSynth).
+- **How it is made.** The synthesizer is
+  [TinySoundFont](https://github.com/schellingb/TinySoundFont) by Bernhard
+  Schelling (MIT license), a single header file in `src/3rdparty/TinySoundFont`.
 
 ## Credits
 

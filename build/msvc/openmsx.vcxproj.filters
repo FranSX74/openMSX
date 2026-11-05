@@ -1083,6 +1083,9 @@
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MidiConvert.cc">
       <Filter>sound</Filter>
     </ClCompile>
+    <ClCompile Include="$(OpenMSXSrcDir)\sound\MidiOutSynth.cc">
+      <Filter>sound</Filter>
+    </ClCompile>
     <ClCompile Include="$(OpenMSXSrcDir)\sound\MidiRecorder.cc">
       <Filter>sound</Filter>
     </ClCompile>
@@ -2751,6 +2754,9 @@
       <Filter>sound</Filter>
     </None>
     <None Include="$(OpenMSXSrcDir)\sound\MidiConvert.hh">
+      <Filter>sound</Filter>
+    </None>
+    <None Include="$(OpenMSXSrcDir)\sound\MidiOutSynth.hh">
       <Filter>sound</Filter>
     </None>
     <None Include="$(OpenMSXSrcDir)\sound\MidiRecorder.hh">

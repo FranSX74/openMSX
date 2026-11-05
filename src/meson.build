@@ -406,6 +406,7 @@ sources = files(
     'sound/MSXYamahaSFG.cc',
     'sound/Mixer.cc',
     'sound/MidiConvert.cc',
+    'sound/MidiOutSynth.cc',
     'sound/MidiRecorder.cc',
     'sound/MSXMidiTap.cc',
     'sound/NullSoundDriver.cc',
@@ -598,6 +599,7 @@ test_sources = files(
 
 incdirs = include_directories(
     '.',
+    '3rdparty/TinySoundFont',
     'cassette',
     'commands',
     'config',
