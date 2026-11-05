@@ -13,6 +13,7 @@
 #include "MagicKey.hh"
 #include "MidiInReader.hh"
 #include "MidiOutLogger.hh"
+#include "MidiOutSynth.hh"
 #include "Mouse.hh"
 #include "NinjaTap.hh"
 #include "Paddle.hh"
@@ -122,6 +123,7 @@ void PluggableFactory::createAll(PluggingController& controller,
 		commandController));
 	controller.registerPluggable(std::make_unique<MidiOutLogger>(
 		commandController));
+	controller.registerPluggable(std::make_unique<MidiOutSynth>(motherBoard));
 
 	// Serial communication:
 	controller.registerPluggable(std::make_unique<RS232Tester>(
