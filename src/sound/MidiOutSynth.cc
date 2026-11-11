@@ -49,9 +49,13 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cassert>
+#include <ctime>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace openmsx {
 
@@ -60,11 +64,76 @@ static constexpr unsigned MAX_VOICES = 128;
 static constexpr float GAIN_DB = -12.0f;
 static constexpr unsigned DRUM_CHANNEL = 9; // MIDI channel 10
 
+// The SoundFonts that are in use. Reading one is slow (all its samples are
+// converted) and after a loadstate or a reverse the synthesizer of the new
+// machine starts before the one of the old machine is deleted: it shares the
+// samples that are in memory already instead of reading the file again.
+namespace {
+struct SharedFont {
+	std::string filename;
+	time_t modified;
+	tsf* master; // never plays: the synthesizers use copies of it
+	unsigned users;
+};
+std::vector<SharedFont> sharedFonts;
+
+struct FontRef {
+	tsf* font;   // the copy to play with
+	tsf* master; // identifies the SharedFont
+};
+
+// Throws PlugException.
+FontRef acquireFont(const std::string& filename)
+{
+	try {
+		File file(filename);
+		auto modified = file.getModificationDate();
+		auto it = std::ranges::find_if(sharedFonts, [&](const SharedFont& f) {
+			return f.filename == filename && f.modified == modified;
+		});
+		if (it == sharedFonts.end()) {
+			auto mapped = file.mmap<const uint8_t>();
+			tsf* master = tsf_load_memory(mapped.data(), narrow<int>(mapped.size()));
+			if (!master) {
+				throw PlugException("'", filename, "' is not a valid SoundFont (.sf2) file");
+			}
+			it = sharedFonts.insert(sharedFonts.end(), SharedFont{filename, modified, master, 0});
+		}
+		tsf* font = tsf_copy(it->master);
+		if (!font) {
+			if (it->users == 0) {
+				tsf_close(it->master);
+				sharedFonts.erase(it);
+			}
+			throw PlugException("Out of memory for the SoundFont '", filename, "'");
+		}
+		++it->users;
+		return {font, it->master};
+	} catch (PlugException&) {
+		throw;
+	} catch (MSXException& e) {
+		throw PlugException("Cannot read the SoundFont '", filename, "': ", e.getMessage());
+	}
+}
+
+void releaseFont(FontRef ref)
+{
+	tsf_close(ref.font);
+	auto it = std::ranges::find(sharedFonts, ref.master, &SharedFont::master);
+	assert(it != sharedFonts.end());
+	if (--it->users == 0) {
+		tsf_close(it->master);
+		sharedFonts.erase(it);
+	}
+}
+} // namespace
+
 // The sound device in the mixer of the machine: it renders the SoundFont.
 class MidiSynthSound final : public SoundDevice
 {
 public:
-	MidiSynthSound(MSXMotherBoard& motherBoard, tsf* font_);
+	/** Takes over 'ref' (also when it throws). */
+	MidiSynthSound(MSXMotherBoard& motherBoard, FontRef ref);
 	~MidiSynthSound();
 
 	/** Play a complete MIDI message. */
@@ -84,8 +153,8 @@ private:
 	void reset();
 
 private:
+	FontRef ref;
 	tsf* font;
-	unsigned sampleRate = 44100;
 };
 
 static DeviceConfig makeConfig(MSXMotherBoard& motherBoard)
@@ -102,21 +171,26 @@ static DeviceConfig makeConfig(MSXMotherBoard& motherBoard)
 	return DeviceConfig(*motherBoard.getMachineConfig(), *xml);
 }
 
-MidiSynthSound::MidiSynthSound(MSXMotherBoard& motherBoard, tsf* font_)
+MidiSynthSound::MidiSynthSound(MSXMotherBoard& motherBoard, FontRef ref_)
+try
 	: SoundDevice(motherBoard.getMSXMixer(), "MIDI-synth",
 	              "General MIDI synthesizer (SoundFont)",
 	              1, 44100, true)
-	, font(font_)
+	, ref(ref_)
+	, font(ref_.font)
 {
 	tsf_set_max_voices(font, MAX_VOICES);
 	reset();
 	registerSound(makeConfig(motherBoard));
+} catch (...) {
+	releaseFont(ref_);
+	throw;
 }
 
 MidiSynthSound::~MidiSynthSound()
 {
 	unregisterSound();
-	tsf_close(font);
+	releaseFont(ref);
 }
 
 void MidiSynthSound::reset()
@@ -128,7 +202,6 @@ void MidiSynthSound::reset()
 
 void MidiSynthSound::setOutputRate(unsigned hostSampleRate, double /*speed*/)
 {
-	sampleRate = hostSampleRate;
 	setInputRate(hostSampleRate);
 	tsf_set_output(font, TSF_STEREO_INTERLEAVED, narrow<int>(hostSampleRate), GAIN_DB);
 }
@@ -215,18 +288,7 @@ void MidiOutSynth::start()
 		throw PlugException("No SoundFont: set the 'midi-out-synth-soundfont' setting "
 		                    "to a .sf2 file first");
 	}
-	tsf* font = nullptr;
-	try {
-		File file(filename);
-		auto mapped = file.mmap<const uint8_t>();
-		font = tsf_load_memory(mapped.data(), narrow<int>(mapped.size()));
-	} catch (MSXException& e) {
-		throw PlugException("Cannot read the SoundFont '", filename, "': ", e.getMessage());
-	}
-	if (!font) {
-		throw PlugException("'", filename, "' is not a valid SoundFont (.sf2) file");
-	}
-	sound = std::make_unique<MidiSynthSound>(motherBoard, font);
+	sound = std::make_unique<MidiSynthSound>(motherBoard, acquireFont(filename));
 }
 
 void MidiOutSynth::stop()
