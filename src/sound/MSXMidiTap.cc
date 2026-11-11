@@ -1,6 +1,7 @@
 #include "MSXMidiTap.hh"
 
 #include "MSXMotherBoard.hh"
+#include "Reactor.hh"
 
 #include "one_of.hh"
 #include "serialize.hh"
@@ -126,12 +127,28 @@ MSXMidiTap::~MSXMidiTap()
 	// A loadstate or a reverse replaces the machine: the new one is created
 	// (and in a reverse it already played up to the target time) before this
 	// one is deleted. It silenced the synthesizer when it was loaded, so don't
-	// cut the notes it plays now. Otherwise do not leave the synthesizer with
-	// sounding notes.
-	auto it = std::ranges::find(liveTaps, this);
-	bool replaced = it != liveTaps.end() - 1;
-	liveTaps.erase(it);
+	// cut the notes it plays now. Otherwise (the machine is closed, also when
+	// there are other machines) do not leave the synthesizer with sounding
+	// notes.
+	std::erase(liveTaps, this);
+	bool replaced = false;
+	for (auto* tap : liveTaps) {
+		if (tap->predecessor == this) {
+			tap->predecessor = nullptr;
+			replaced = true;
+		}
+	}
 	if (!replaced) allNotesOff(getCurrentTime());
+}
+
+void MSXMidiTap::findPredecessor()
+{
+	// A state is loaded while the machine that it will replace is still the
+	// active one (loadstate, reverse).
+	const auto* active = getMotherBoard().getReactor().getMotherBoard();
+	for (auto* tap : liveTaps) {
+		if (tap != this && &tap->getMotherBoard() == active) predecessor = tap;
+	}
 }
 
 int MSXMidiTap::allocateChannel()
@@ -221,7 +238,7 @@ void MSXMidiTap::step(EmuTime time)
 	syncStep.setSyncPoint(nextStep);
 }
 
-void MSXMidiTap::sendEvent(const Event& e, int channel, EmuTime time)
+void MSXMidiTap::sendEvent(const midi::Event& e, int channel, EmuTime time)
 {
 	if (channel < 0) return;
 	outConnector.recvByte(uint8_t((e.data[0] & 0xF0) | channel), time);
@@ -233,12 +250,12 @@ void MSXMidiTap::sendEvent(const Event& e, int channel, EmuTime time)
 // Keep, of the events of a track without a channel yet, what decides how its
 // first note sounds: the last program, the last value of every controller and
 // the last pitch bend. The pitch bend range (RPN 0) is sent again as a whole.
-static void holdEvent(std::vector<Event>& held, const Event& e)
+static void holdEvent(std::vector<midi::Event>& held, const midi::Event& e)
 {
 	uint8_t type = e.data[0] & 0xF0;
 	if (type == one_of(0x80, 0x90)) return; // notes off (a note on assigns the channel)
 	if (type == 0xB0 && e.data[1] == one_of(101, 100, 6, 38)) {
-		bool hasRpn = std::ranges::any_of(held, [](const Event& h) {
+		bool hasRpn = std::ranges::any_of(held, [](const midi::Event& h) {
 			return (h.data[0] & 0xF0) == 0xB0 && h.data[1] == 101;
 		});
 		if (!hasRpn) {
@@ -249,7 +266,7 @@ static void holdEvent(std::vector<Event>& held, const Event& e)
 		}
 		return;
 	}
-	auto same = [&](const Event& h) {
+	auto same = [&](const midi::Event& h) {
 		return (h.data[0] & 0xF0) == type && (type != 0xB0 || h.data[1] == e.data[1]);
 	};
 	if (auto it = std::ranges::find_if(held, same); it != held.end()) {
@@ -259,7 +276,7 @@ static void holdEvent(std::vector<Event>& held, const Event& e)
 	}
 }
 
-void MSXMidiTap::deliver(ChipState& chip, size_t i, const Event& e, EmuTime time)
+void MSXMidiTap::deliver(ChipState& chip, size_t i, const midi::Event& e, EmuTime time)
 {
 	if (chip.pending()) {
 		chip.held.resize(chip.tracks.size());
@@ -433,7 +450,10 @@ void MSXMidiTap::serialize(Archive& ar, unsigned version)
 	ar.template serializeBase<MSXDevice>(*this);
 	if (version < 2) {
 		// no conversion state in these: start again with the next register write
-		if constexpr (Archive::IS_LOADER) restartOutput(getCurrentTime());
+		if constexpr (Archive::IS_LOADER) {
+			findPredecessor();
+			restartOutput(getCurrentTime());
+		}
 		return;
 	}
 	// What is saved: the registers of the chips and the MIDI channels they
@@ -462,6 +482,7 @@ void MSXMidiTap::serialize(Archive& ar, unsigned version)
 	             "nextChannel", nextChannel);
 	if constexpr (Archive::IS_LOADER) {
 		int loadedNextChannel = nextChannel;
+		findPredecessor();
 		restartOutput(snapshotTime);
 		nextChannel = loadedNextChannel;
 		// applied when all the devices of the machine exist, see restoreIfLoaded()

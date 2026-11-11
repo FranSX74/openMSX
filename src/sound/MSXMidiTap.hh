@@ -89,6 +89,7 @@ private:
 		std::vector<uint8_t> regs;
 	};
 	void restoreChip(const SavedChip& saved);
+	void findPredecessor();
 	void restoreIfLoaded(EmuTime time);
 	void applyRestore();
 	/** Forget the conversion state and restart the output clock. */
@@ -137,8 +138,11 @@ private:
 	MidiOutConnector outConnector;
 	std::vector<std::unique_ptr<ChipState>> chips;
 	std::vector<SavedChip> toRestore; // loaded, not applied yet
-	/** All the MIDI Taps, in the order they were created (see ~MSXMidiTap()). */
+	/** All the MIDI Taps (of all the machines). */
 	static inline std::vector<MSXMidiTap*> liveTaps;
+	/** For a MIDI Tap that was loaded from a state: the one of the machine
+	  * it replaces (see ~MSXMidiTap()), if it still exists. */
+	MSXMidiTap* predecessor = nullptr;
 	int nextChannel = 0;
 	bool cleanActive = false;
 	EmuTime start;
