@@ -82,6 +82,7 @@ YM2413::YM2413(const std::string& name_, const DeviceConfig& config)
 YM2413::~YM2413()
 {
 	unregisterSound();
+	midiRecorder.unregisterChip(midiRecorderId);
 }
 
 void YM2413::reset(EmuTime time)
@@ -139,6 +140,9 @@ template<typename Archive>
 void YM2413::serialize(Archive& ar, unsigned /*version*/)
 {
 	ar.serializePolymorphic("ym2413", *core);
+	if constexpr (Archive::IS_LOADER) {
+		midiRecorder.syncRegisters(midiRecorderId, core->peekRegs());
+	}
 }
 INSTANTIATE_SERIALIZE_METHODS(YM2413);
 

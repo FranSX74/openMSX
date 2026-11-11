@@ -521,6 +521,7 @@ AY8910::~AY8910()
 	detunePercent .detach(*this);
 
 	unregisterSound();
+	midiRecorder.unregisterChip(midiRecorderId);
 }
 
 void AY8910::reset(EmuTime time)
@@ -1018,6 +1019,7 @@ void AY8910::serialize(Archive& ar, unsigned /*version*/)
 		for (auto i : xrange(3)) {
 			amplitude.setChannelVolume(i, regs[i + AY_AVOL]);
 		}
+		midiRecorder.syncRegisters(midiRecorderId, regs, outputFreq * 8.0f);
 	}
 }
 INSTANTIATE_SERIALIZE_METHODS(AY8910);

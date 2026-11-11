@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,6 +79,15 @@ public:
 	/** Every sound chip registers itself and gets an id to use in the
 	  * write functions below. */
 	[[nodiscard]] unsigned registerChip(Chip kind);
+	/** The chip is removed from the machine: its voices are silenced and
+	  * its state is forgotten. The id can be given to a later chip of the
+	  * same kind. */
+	void unregisterChip(unsigned id);
+	/** The registers of a chip after its state was loaded (loadstate,
+	  * reverse): the writes that set them were never seen here. Same layout
+	  * as the write functions. Nothing is reported to the listeners.
+	  * @param clock PSG clock frequency, 0: unchanged */
+	void syncRegisters(unsigned id, std::span<const uint8_t> regs, float clock = 0.0f);
 
 	/** Must be called for every register write to a PSG. This is cheap
 	  * when not recording.
@@ -171,6 +181,7 @@ private:
 		std::array<uint8_t, 256> regs = {};
 		float clock = 1789772.0f;
 		uint8_t latch = 0; // YM2413 address latch
+		bool alive = true; // false: unregistered, the id is free
 	};
 
 	void log(unsigned id, unsigned reg, uint8_t value, float clock,

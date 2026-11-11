@@ -208,10 +208,45 @@ MidiRecorder::~MidiRecorder()
 
 unsigned MidiRecorder::registerChip(Chip kind)
 {
-	auto& s = chips.emplace_back();
-	s.kind = kind;
-	s.clock = (kind == Chip::PSG) ? 1789772.0f : float(OPLL_CLOCK); // OPLL and SCC
-	return unsigned(chips.size() - 1);
+	// Take the id of a removed chip of the same kind (if a recording is
+	// active its voices continue in the same tracks), so the ids stay small.
+	auto it = std::ranges::find_if(chips, [&](const ChipState& c) {
+		return !c.alive && c.kind == kind;
+	});
+	if (it == chips.end()) it = chips.insert(chips.end(), ChipState{});
+	*it = ChipState{};
+	it->kind = kind;
+	it->clock = (kind == Chip::PSG) ? 1789772.0f : float(OPLL_CLOCK); // OPLL and SCC
+	return unsigned(it - chips.begin());
+}
+
+void MidiRecorder::unregisterChip(unsigned id)
+{
+	// Silence it first: for a recording that is active and for the listeners
+	// the notes of a chip that is taken away must end.
+	auto time = motherBoard.getCurrentTime();
+	switch (chips[id].kind) {
+	case Chip::PSG:
+		for (unsigned r = 8; r <= 10; ++r) {
+			psgWrite(id, r, 0, chips[id].clock, time);
+		}
+		break;
+	case Chip::SCC:
+		sccReset(id, time);
+		break;
+	case Chip::OPLL:
+		opllReset(id, time);
+		break;
+	}
+	chips[id].regs.fill(0);
+	chips[id].alive = false;
+}
+
+void MidiRecorder::syncRegisters(unsigned id, std::span<const uint8_t> regs, float clock)
+{
+	auto& s = chips[id];
+	std::ranges::copy(regs.first(std::min(regs.size(), s.regs.size())), s.regs.begin());
+	if (clock > 0.0f) s.clock = clock;
 }
 
 void MidiRecorder::opllReset(unsigned id, EmuTime time)
@@ -259,9 +294,17 @@ void MidiRecorder::start(const std::string& file, EmuTime time)
 	// Initial register state
 	for (size_t i = 0; i < chips.size(); ++i) {
 		const auto& s = chips[i];
+		if (!s.alive) continue;
 		unsigned num = (s.kind == Chip::PSG) ? 14 : (s.kind == Chip::SCC) ? 0xB1 : 0x39;
-		for (unsigned r = 0; r < num; ++r) {
+		auto add = [&](unsigned r) {
 			entries.push_back({0.0, s.clock, uint8_t(i), uint8_t(r), s.regs[r]});
+		};
+		// the SCC deformation register first: it decides how the
+		// frequencies that follow count
+		if (s.kind == Chip::SCC) add(0xB0);
+		for (unsigned r = 0; r < num; ++r) {
+			if (s.kind == Chip::SCC && r == 0xB0) continue;
+			add(r);
 		}
 	}
 	recording = true;

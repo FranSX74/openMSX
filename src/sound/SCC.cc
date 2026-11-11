@@ -143,6 +143,7 @@ SCC::SCC(const std::string& name_, const DeviceConfig& config,
 SCC::~SCC()
 {
 	unregisterSound();
+	midiRecorder.unregisterChip(midiRecorderId);
 }
 
 void SCC::powerUp(EmuTime time)
@@ -627,6 +628,21 @@ void SCC::serialize(Archive& ar, unsigned /*version*/)
 			setFreqVol(2 * channel + 0, (per & 0x0FF) >> 0, time);
 			setFreqVol(2 * channel + 1, (per & 0xF00) >> 8, time);
 		}
+
+		// the MIDI recorder did not see the writes that led to this state
+		// (layout: see reportToMidiRecorder())
+		std::array<uint8_t, 0xB1> r = {};
+		for (auto channel : xrange(5)) {
+			for (auto p : xrange(32)) {
+				r[32 * channel + p] = uint8_t(wave[channel][p]);
+			}
+			r[0xA0 + 2 * channel] = uint8_t(orgPeriod[channel] & 0xFF);
+			r[0xA1 + 2 * channel] = uint8_t((orgPeriod[channel] >> 8) & 0x0F);
+			r[0xAA + channel] = volume[channel];
+		}
+		r[0xAF] = ch_enable;
+		r[0xB0] = deformValue;
+		midiRecorder.syncRegisters(midiRecorderId, r);
 	}
 
 	// call to setFreqVol() modifies these variables, see above
